@@ -12,3 +12,7 @@ updates:
     schedule:
       interval: "weekly"
     versioning-strategy: increase
+  - package-ecosystem: "composer"
+    directory: "/"
+    schedule:
+      interval: "weekly"
