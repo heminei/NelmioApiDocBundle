@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## 4.38.1
+## 4.38.2
 - Support of attribute MapQueryParameter with a regexp has been improved, it now converts the regexp from PCRE to ECMA-262 for better compliance with OpenApi. 
 
 ## 4.38.0
