@@ -66,7 +66,7 @@ Then run the test suite:
         <img alt="JetBrains logo" src="https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg" />
     </a>
     <p align=center>
-        This project is sponsored by JetBrains by providing an open-source license for their tools.
+        JetBrains sponsors this project by providing an open-source license for their tools.
     </p>
 </p>
 
