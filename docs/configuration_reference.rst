@@ -59,6 +59,11 @@ The bundle configuration is stored under the ``nelmio_api_doc`` key in your appl
                     # - ^api_v1
                 # whether to filter by attributes
                 with_attribute: false
+                security:
+                    # Authentication schemes https://swagger.io/docs/specification/v3_0/authentication/
+                    MyBearerScheme:
+                        type: 'http'
+                        scheme: 'bearer'
                 # if set disables default routes without attributes
                 disable_default_routes: false
                 # The base documentation used for the area
@@ -236,6 +241,10 @@ Filter the routes that are documented.
                         # Example:
                         # - ^api_v1
                     with_attribute: false
+                    security:
+                        MyBearerScheme:
+                            type: 'http'
+                            scheme: 'bearer'
                     disable_default_routes: false
                     documentation:
                         # Example:
@@ -279,6 +288,31 @@ with_attribute
 **default**: ``false``
 
 Whether to only document routes with the ``#[Areas]`` annotation/attribute.
+
+security
+...........
+
+**type**: ``dictionary``
+**default**: ``[]``
+
+Defines the security scheme(s) to use for the area. See `authentication schemes`_ for more information and possible values.
+See the :ref:`security page <area-security-configuration>` for more information on how to configure security for your areas.
+
+.. code-block:: yaml
+
+        nelmio_api_doc:
+            # ...
+
+            areas:
+                default:
+                    security:
+                        MyBearerScheme:
+                            type: 'http'
+                            scheme: 'bearer'
+
+.. versionadded:: 5.2
+
+    The possibility to automatically generate security definitions based on the ``#[IsGranted]`` attribute was added in version 5.2.
 
 disable_default_routes
 ......................
@@ -345,3 +379,4 @@ List of models, this can be used to:
 
 
 .. _`symfony/type-info`: https://symfony.com/doc/current/components/type_info.html
+.. _`authentication schemes`: https://swagger.io/docs/specification/v3_0/authentication/
