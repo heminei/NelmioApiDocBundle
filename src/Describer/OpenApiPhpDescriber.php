@@ -53,10 +53,14 @@ final class OpenApiPhpDescriber
             $supportedHttpMethods = $this->getSupportedHttpMethods($route);
 
             $classReflector = $reflectedMethod->getDeclaringClass();
-            if (\is_array($controller) && method_exists(...$controller)) {
-                $classReflector = new \ReflectionClass($controller[0]);
-            } elseif (\is_string($controller) && false !== $i = strpos($controller, '::')) {
-                $classReflector = new \ReflectionClass(substr($controller, 0, $i));
+            try {
+                if (\is_array($controller) && method_exists(...$controller)) {
+                    $classReflector = new \ReflectionClass($controller[0]);
+                } elseif (\is_string($controller) && false !== $i = strpos($controller, '::')) {
+                    $classReflector = new \ReflectionClass(substr($controller, 0, $i));
+                }
+            } catch (\ReflectionException) {
+                // Fallback to the declaring class if the controller class does not exist
             }
 
             $path = Util::getPath($api, $path);

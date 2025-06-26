@@ -79,10 +79,14 @@ final class SecurityDescriber implements DescriberInterface
         }
 
         $classReflector = null;
-        if (\is_array($controller) && method_exists(...$controller)) {
-            $classReflector = new \ReflectionClass($controller[0]);
-        } elseif (\is_string($controller) && false !== $i = strpos($controller, '::')) {
-            $classReflector = new \ReflectionClass(substr($controller, 0, $i));
+        try {
+            if (\is_array($controller) && method_exists(...$controller)) {
+                $classReflector = new \ReflectionClass($controller[0]);
+            } elseif (\is_string($controller) && false !== $i = strpos($controller, '::')) {
+                $classReflector = new \ReflectionClass(substr($controller, 0, $i));
+            }
+        } catch (\ReflectionException) {
+            // Fallback
         }
 
         $attributes = array_map(
