@@ -15,28 +15,19 @@ use Symfony\Component\PropertyInfo\Type;
 
 final class Model
 {
-    private Type $type;
-
     /**
-     * @var mixed[]
+     * @param string[]|null         $groups
+     * @param mixed[]               $options
+     * @param mixed[]               $serializationContext
+     * @param non-empty-string|null $name                 An optional custom name for the generated schema
      */
-    private array $options;
-
-    /**
-     * @var mixed[]
-     */
-    private array $serializationContext;
-
-    /**
-     * @param string[]|null $groups
-     * @param mixed[]       $options
-     * @param mixed[]       $serializationContext
-     */
-    public function __construct(Type $type, ?array $groups = null, array $options = [], array $serializationContext = [])
-    {
-        $this->type = $type;
-        $this->options = $options;
-        $this->serializationContext = $serializationContext;
+    public function __construct(
+        private Type $type,
+        ?array $groups = null,
+        private array $options = [],
+        private array $serializationContext = [],
+        public readonly ?string $name = null,
+    ) {
         if (null !== $groups) {
             $this->serializationContext['groups'] = $groups;
         }
@@ -65,7 +56,7 @@ final class Model
 
     public function getHash(): string
     {
-        return md5(serialize([$this->type, $this->getSerializationContext()]));
+        return md5(serialize([$this->type, $this->getSerializationContext(), $this->name]));
     }
 
     /**

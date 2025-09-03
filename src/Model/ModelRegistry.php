@@ -29,11 +29,6 @@ final class ModelRegistry
     private array $registeredModelNames = [];
 
     /**
-     * @var Model[]
-     */
-    private array $alternativeNames = [];
-
-    /**
      * @var string[] List of hashes of models that have not been registered yet
      */
     private array $unregistered = [];
@@ -49,9 +44,14 @@ final class ModelRegistry
     private array $names = [];
 
     /**
-     * @var array<string, array{'schema': string, 'model': Model}[]> List of schemas and Model per type
+     * @var array<string, string> List of model hashes to model alternative names
      */
-    private array $schemasPerType = [];
+    private array $alternativeNames = [];
+
+    /**
+     * @var array<string, array<string, Model>> Map from identifier and schema content to Model
+     */
+    private array $schemaToModelMap = [];
 
     /**
      * @var iterable<ModelDescriberInterface>
@@ -71,39 +71,43 @@ final class ModelRegistry
         $this->modelDescribers = $modelDescribers;
         $this->api = $api;
         $this->logger = new NullLogger();
+
+        // The array is reversed to ensure that the first defined alternative name for a model is used.
         foreach (array_reverse($alternativeNames) as $alternativeName => $criteria) {
-            $this->alternativeNames[] = $model = new Model(
+            $model = new Model(
                 new Type('object', false, $criteria['type']),
                 $criteria['groups'],
                 $criteria['options'] ?? [],
                 $criteria['serializationContext'] ?? [],
             );
-            $this->names[$model->getHash()] = $alternativeName;
-            $this->registeredModelNames[$alternativeName] = $model;
-            Util::getSchema($this->api, $alternativeName);
+
+            $this->alternativeNames[$model->getHash()] = $alternativeName;
+
+            $this->register($model);
         }
     }
 
     public function register(Model $model): string
     {
         $hash = $model->getHash();
-        $type = $this->getTypeShortName($model->getType());
+
+        $identifier = $this->determineModelName($model);
 
         $schema = null;
         if (!isset($this->names[$hash])) {
-            $this->names[$hash] = $this->generateModelName($model);
-            $this->registeredModelNames[$this->names[$hash]] = $model;
+            $this->names[$hash] = $name = $this->generateUniqueModelName($model);
+            $this->registeredModelNames[$name] = $model;
 
             $schema = $this->describeSchema($model, null);
             // Only try to match schemas if we successfully got one
             if (null !== $schema) {
-                foreach ($this->schemasPerType[$type] ?? [] as $schemaAndModel) {
-                    if ($schemaAndModel['schema'] === json_encode($schema->jsonSerialize())) {
-                        $newHash = $schemaAndModel['model']->getHash();
-                        unset($this->names[$hash], $this->registeredModelNames[$hash]);
+                $schemaJson = json_encode($schema);
+                if (isset($this->schemaToModelMap[$identifier][$schemaJson])) {
+                    $existingModel = $this->schemaToModelMap[$identifier][$schemaJson];
+                    $newHash = $existingModel->getHash();
+                    unset($this->names[$hash], $this->registeredModelNames[$name]);
 
-                        return OA\Components::SCHEMA_REF.$this->names[$newHash];
-                    }
+                    return OA\Components::SCHEMA_REF.$this->names[$newHash];
                 }
             }
         }
@@ -114,7 +118,7 @@ final class ModelRegistry
             $this->unregistered = array_unique($this->unregistered);
             // Only store schema if it was successfully generated
             if (null !== $schema) {
-                $this->schemasPerType[$type][] = ['schema' => json_encode($schema), 'model' => $model];
+                $this->schemaToModelMap[$identifier][$schemaJson ?? json_encode($schema)] = $model;
             }
         }
 
@@ -158,13 +162,12 @@ final class ModelRegistry
     public function registerSchemas(): void
     {
         while (\count($this->unregistered)) {
-            $tmp = [];
-            foreach ($this->unregistered as $hash) {
-                $tmp[$this->names[$hash]] = $this->models[$hash];
-            }
+            $unregistered = $this->unregistered;
             $this->unregistered = [];
 
-            foreach ($tmp as $name => $model) {
+            foreach ($unregistered as $hash) {
+                $name = $this->names[$hash];
+                $model = $this->models[$hash];
                 $schema = $this->describeSchema($model, $name);
 
                 if (null === $schema) {
@@ -176,19 +179,29 @@ final class ModelRegistry
                 }
             }
         }
-
-        if ([] === $this->unregistered && [] !== $this->alternativeNames) {
-            foreach ($this->alternativeNames as $model) {
-                $this->register($model);
-            }
-            $this->alternativeNames = [];
-            $this->registerSchemas();
-        }
     }
 
-    private function generateModelName(Model $model): string
+    private function determineModelName(Model $model): string
     {
-        $name = $base = $this->getTypeShortName($model->getType());
+        $hash = $model->getHash();
+
+        // 1. From the alternative names configuration
+        if (isset($this->alternativeNames[$hash])) {
+            return $this->alternativeNames[$hash];
+        }
+
+        // 2. From the model itself (e.g. #[Model(name: "MyModel")])
+        if (null !== $model->name) {
+            return $model->name;
+        }
+
+        // 3. Generate from the type
+        return $this->getTypeShortName($model->getType());
+    }
+
+    private function generateUniqueModelName(Model $model): string
+    {
+        $name = $base = $this->determineModelName($model);
         $names = array_column(
             $this->api->components instanceof OA\Components && \is_array($this->api->components->schemas) ? $this->api->components->schemas : [],
             'schema'
