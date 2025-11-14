@@ -820,9 +820,6 @@ class FunctionalTest extends WebTestCase
         self::assertFalse($model->additionalProperties);
     }
 
-    /**
-     * @requires PHP >= 8.1
-     */
     public function testEnumSupport(): void
     {
         $model = $this->getModel('ArticleType81');

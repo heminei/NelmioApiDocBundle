@@ -21,6 +21,8 @@ use Nelmio\ApiDocBundle\Model\Model;
 use Nelmio\ApiDocBundle\Model\ModelRegistry;
 use Nelmio\ApiDocBundle\OpenApiPhp\Util;
 use OpenApi\Annotations as OA;
+use Symfony\Component\PropertyInfo\Type as LegacyType;
+use Symfony\Component\TypeInfo\Type\ObjectType;
 
 class BazingaHateoasModelDescriber implements ModelDescriberInterface, ModelRegistryAwareInterface
 {
@@ -87,8 +89,13 @@ class BazingaHateoasModelDescriber implements ModelDescriberInterface, ModelRegi
 
     private function getHateoasMetadata(Model $model): ?object
     {
+        /** @var ObjectType|LegacyType $type */
+        $type = class_exists(\Symfony\Component\TypeInfo\Type::class)
+            ? $model->getTypeInfo()
+            : $model->getType();
+
         try {
-            return $this->factory->getMetadataForClass($model->getType()->getClassName());
+            return $this->factory->getMetadataForClass($type->getClassName());
         } catch (\ReflectionException $e) {
         }
 
