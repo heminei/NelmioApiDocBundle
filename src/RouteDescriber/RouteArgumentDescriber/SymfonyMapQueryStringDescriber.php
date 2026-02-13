@@ -16,10 +16,10 @@ namespace Nelmio\ApiDocBundle\RouteDescriber\RouteArgumentDescriber;
 use Nelmio\ApiDocBundle\Describer\ModelRegistryAwareInterface;
 use Nelmio\ApiDocBundle\Describer\ModelRegistryAwareTrait;
 use Nelmio\ApiDocBundle\Model\Model;
+use Nelmio\ApiDocBundle\Util\LegacyTypeConverter;
 use OpenApi\Annotations as OA;
 use Symfony\Component\HttpKernel\Attribute\MapQueryString;
 use Symfony\Component\HttpKernel\ControllerMetadata\ArgumentMetadata;
-use Symfony\Component\PropertyInfo\Type;
 use Symfony\Component\Validator\Constraints\GroupSequence;
 
 final class SymfonyMapQueryStringDescriber implements RouteArgumentDescriberInterface, ModelRegistryAwareInterface
@@ -37,7 +37,7 @@ final class SymfonyMapQueryStringDescriber implements RouteArgumentDescriberInte
         }
 
         $modelRef = $this->modelRegistry->register(new Model(
-            new Type(Type::BUILTIN_TYPE_OBJECT, $argumentMetadata->isNullable(), $argumentMetadata->getType()),
+            LegacyTypeConverter::createType($argumentMetadata->getType()),
             groups: $this->getGroups($attribute),
             serializationContext: $attribute->serializationContext,
         ));
@@ -59,11 +59,11 @@ final class SymfonyMapQueryStringDescriber implements RouteArgumentDescriberInte
      */
     private function getGroups(MapQueryString $attribute): ?array
     {
-        if (is_string($attribute->validationGroups)) {
+        if (\is_string($attribute->validationGroups)) {
             return [$attribute->validationGroups];
         }
 
-        if (is_array($attribute->validationGroups)) {
+        if (\is_array($attribute->validationGroups)) {
             return $attribute->validationGroups;
         }
 

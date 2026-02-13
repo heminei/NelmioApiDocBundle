@@ -16,10 +16,10 @@ namespace Nelmio\ApiDocBundle\RouteDescriber\RouteArgumentDescriber;
 use Nelmio\ApiDocBundle\Describer\ModelRegistryAwareInterface;
 use Nelmio\ApiDocBundle\Describer\ModelRegistryAwareTrait;
 use Nelmio\ApiDocBundle\Model\Model;
+use Nelmio\ApiDocBundle\Util\LegacyTypeConverter;
 use OpenApi\Annotations as OA;
 use Symfony\Component\HttpKernel\Attribute\MapRequestPayload;
 use Symfony\Component\HttpKernel\ControllerMetadata\ArgumentMetadata;
-use Symfony\Component\PropertyInfo\Type;
 use Symfony\Component\Validator\Constraints\GroupSequence;
 
 final class SymfonyMapRequestPayloadDescriber implements RouteArgumentDescriberInterface, ModelRegistryAwareInterface
@@ -35,8 +35,15 @@ final class SymfonyMapRequestPayloadDescriber implements RouteArgumentDescriberI
             return;
         }
 
+        $typeClass = $argumentMetadata->getType();
+
+        $reflectionAttribute = new \ReflectionClass(MapRequestPayload::class);
+        if ('array' === $typeClass && $reflectionAttribute->hasProperty('type') && null !== $attribute->type) {
+            $typeClass = $attribute->type;
+        }
+
         $modelRef = $this->modelRegistry->register(new Model(
-            new Type(Type::BUILTIN_TYPE_OBJECT, false, $argumentMetadata->getType()),
+            LegacyTypeConverter::createType($typeClass),
             groups: $this->getGroups($attribute),
             serializationContext: $attribute->serializationContext,
         ));
@@ -50,11 +57,11 @@ final class SymfonyMapRequestPayloadDescriber implements RouteArgumentDescriberI
      */
     private function getGroups(MapRequestPayload $attribute): ?array
     {
-        if (is_string($attribute->validationGroups)) {
+        if (\is_string($attribute->validationGroups)) {
             return [$attribute->validationGroups];
         }
 
-        if (is_array($attribute->validationGroups)) {
+        if (\is_array($attribute->validationGroups)) {
             return $attribute->validationGroups;
         }
 

@@ -11,31 +11,29 @@
 
 namespace Nelmio\ApiDocBundle\Tests\ModelDescriber;
 
-use Doctrine\Common\Annotations\Reader;
 use Nelmio\ApiDocBundle\Model\Model;
 use Nelmio\ApiDocBundle\Model\ModelRegistry;
 use Nelmio\ApiDocBundle\ModelDescriber\FormModelDescriber;
 use OpenApi\Annotations\Property;
 use OpenApi\Attributes\OpenApi;
 use OpenApi\Generator;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Form\Extension\Core\Type\FormType;
 use Symfony\Component\Form\FormConfigInterface;
 use Symfony\Component\Form\FormFactoryInterface;
 use Symfony\Component\Form\FormInterface;
-use Symfony\Component\PropertyInfo\Type;
+use Symfony\Component\TypeInfo\Type;
 
 class FormModelDescriberTest extends TestCase
 {
-    /**
-     * @dataProvider provideCsrfProtectionOptions
-     */
+    #[DataProvider('provideCsrfProtectionOptions')]
     public function testDescribeCreatesTokenPropertyDependingOnOptions(bool $csrfProtectionEnabled, string $tokenName, bool $expectProperty): void
     {
         $formConfigMock = $this->createMock(FormConfigInterface::class);
         $formConfigMock->expects(self::exactly($csrfProtectionEnabled ? 2 : 1))
             ->method('getOption')
-            ->willReturnCallback(function (string $option, $default) use ($csrfProtectionEnabled, $tokenName) {
+            ->willReturnCallback(static function (string $option, $default) use ($csrfProtectionEnabled, $tokenName) {
                 if ('csrf_protection' === $option) {
                     return $csrfProtectionEnabled;
                 }
@@ -57,20 +55,18 @@ class FormModelDescriberTest extends TestCase
             ->method('create')
             ->willReturn($formMock);
 
-        $annotationReader = $this->createMock(Reader::class);
-
         $api = new OpenApi();
-        $model = new Model(new Type(Type::BUILTIN_TYPE_OBJECT, false, FormType::class));
+        $model = new Model(Type::object(FormType::class));
         $schema = $this->initSchema();
         $modelRegistry = new ModelRegistry([], $api);
 
-        $describer = new FormModelDescriber($formFactoryMock, $annotationReader, [], false, true);
+        $describer = new FormModelDescriber($formFactoryMock, [], false, true);
         $describer->setModelRegistry($modelRegistry);
 
         $describer->describe($model, $schema);
 
         if ($expectProperty) {
-            $filteredProperties = array_filter($schema->properties, function (Property $property) use ($tokenName) {
+            $filteredProperties = array_filter($schema->properties, static function (Property $property) use ($tokenName) {
                 return $property->property === $tokenName;
             });
 
@@ -89,10 +85,6 @@ class FormModelDescriberTest extends TestCase
 
     private function initSchema(): \OpenApi\Annotations\Schema
     {
-        if (PHP_VERSION_ID < 80000) {
-            return new \OpenApi\Annotations\Schema([]);
-        }
-
         return new \OpenApi\Attributes\Schema(); // union types, used in schema attribute require PHP >= 8.0.0
     }
 }

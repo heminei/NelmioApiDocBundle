@@ -28,34 +28,34 @@ class WebTestCase extends BaseWebTestCase
 
     protected function getOpenApiDefinition(string $area = 'default'): OA\OpenApi
     {
-        return static::$kernel->getContainer()->get(sprintf('nelmio_api_doc.generator.%s', $area))->generate();
+        return static::$kernel->getContainer()->get(\sprintf('nelmio_api_doc.generator.%s', $area))->generate();
     }
 
-    public function hasModel(string $name): bool
+    public function hasModel(string $name, string $area = 'default'): bool
     {
-        $api = $this->getOpenApiDefinition();
+        $api = $this->getOpenApiDefinition($area);
         $key = array_search($name, array_column($api->components->schemas, 'schema'), true);
 
         return false !== $key;
     }
 
-    protected function getModel(string $name): OA\Schema
+    protected function getModel(string $name, string $area = 'default'): OA\Schema
     {
-        $api = $this->getOpenApiDefinition();
+        $api = $this->getOpenApiDefinition($area);
         $key = array_search($name, array_column($api->components->schemas, 'schema'), true);
-        static::assertNotFalse($key, sprintf('Model "%s" does not exist.', $name));
+        static::assertNotFalse($key, \sprintf('Model "%s" does not exist.', $name));
 
         return $api->components->schemas[$key];
     }
 
-    protected function getOperation(string $path, string $method): OA\Operation
+    protected function getOperation(string $path, string $method, string $area = 'default'): OA\Operation
     {
-        $path = $this->getPath($path);
+        $path = $this->getPath($path, $area);
 
         self::assertInstanceOf(
             OA\Operation::class,
             $path->{$method},
-            sprintf('Operation "%s" for path "%s" does not exist', $method, $path->path)
+            \sprintf('Operation "%s" for path "%s" does not exist', $method, $path->path)
         );
 
         return $path->{$method};
@@ -80,22 +80,19 @@ class WebTestCase extends BaseWebTestCase
         return $annotation->properties[$key];
     }
 
-    /**
-     * @param OA\Operation|OA\OpenApi $annotation
-     */
-    protected function getParameter(OA\AbstractAnnotation $annotation, string $name, string $in): OA\Parameter
+    protected function getParameter(OA\Operation|OA\OpenApi $annotation, string $name, string $in): OA\Parameter
     {
         $this->assertHasParameter($name, $in, $annotation);
-        $parameters = array_filter($annotation->parameters ?? [], function (OA\Parameter $parameter) use ($name, $in) {
+        $parameters = array_filter($annotation->parameters ?? [], static function (OA\Parameter $parameter) use ($name, $in) {
             return $parameter->name === $name && $parameter->in === $in;
         });
 
         return array_values($parameters)[0];
     }
 
-    protected function getPath(string $path): OA\PathItem
+    protected function getPath(string $path, string $area = 'default'): OA\PathItem
     {
-        $api = $this->getOpenApiDefinition();
+        $api = $this->getOpenApiDefinition($area);
         self::assertHasPath($path, $api);
 
         return $api->paths[array_search($path, array_column($api->paths, 'path'), true)];
@@ -107,7 +104,7 @@ class WebTestCase extends BaseWebTestCase
         static::assertContains(
             $path,
             $paths,
-            sprintf('Failed asserting that path "%s" does exist.', $path)
+            \sprintf('Failed asserting that path "%s" does exist.', $path)
         );
     }
 
@@ -117,7 +114,7 @@ class WebTestCase extends BaseWebTestCase
         static::assertNotContains(
             $path,
             $paths,
-            sprintf('Failed asserting that path "%s" does not exist.', $path)
+            \sprintf('Failed asserting that path "%s" does not exist.', $path)
         );
     }
 
@@ -130,7 +127,7 @@ class WebTestCase extends BaseWebTestCase
         static::assertContains(
             $responseCode,
             $responses,
-            sprintf('Failed asserting that response "%s" does exist.', $responseCode)
+            \sprintf('Failed asserting that response "%s" does exist.', $responseCode)
         );
     }
 
@@ -139,13 +136,13 @@ class WebTestCase extends BaseWebTestCase
      */
     public function assertHasParameter(string $name, string $in, OA\AbstractAnnotation $annotation): void
     {
-        $parameters = array_filter(Generator::UNDEFINED !== $annotation->parameters ? $annotation->parameters : [], function (OA\Parameter $parameter) use ($name, $in) {
+        $parameters = array_filter(Generator::UNDEFINED !== $annotation->parameters ? $annotation->parameters : [], static function (OA\Parameter $parameter) use ($name, $in) {
             return $parameter->name === $name && $parameter->in === $in;
         });
 
         static::assertNotEmpty(
             $parameters,
-            sprintf('Failed asserting that parameter "%s" in "%s" does exist.', $name, $in)
+            \sprintf('Failed asserting that parameter "%s" in "%s" does exist.', $name, $in)
         );
     }
 
@@ -158,7 +155,7 @@ class WebTestCase extends BaseWebTestCase
         static::assertNotContains(
             $name,
             $parameters[$in] ?? [],
-            sprintf('Failed asserting that parameter "%s" in "%s" does not exist.', $name, $in)
+            \sprintf('Failed asserting that parameter "%s" in "%s" does not exist.', $name, $in)
         );
     }
 
@@ -171,7 +168,7 @@ class WebTestCase extends BaseWebTestCase
         static::assertContains(
             $property,
             $properties,
-            sprintf('Failed asserting that property "%s" does exist.', $property)
+            \sprintf('Failed asserting that property "%s" does exist.', $property)
         );
     }
 
@@ -184,7 +181,7 @@ class WebTestCase extends BaseWebTestCase
         static::assertNotContains(
             $property,
             $properties,
-            sprintf('Failed asserting that property "%s" does not exist.', $property)
+            \sprintf('Failed asserting that property "%s" does not exist.', $property)
         );
     }
 }

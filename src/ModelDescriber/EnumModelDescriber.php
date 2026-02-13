@@ -13,21 +13,29 @@ namespace Nelmio\ApiDocBundle\ModelDescriber;
 
 use Nelmio\ApiDocBundle\Model\Model;
 use OpenApi\Annotations\Schema;
-use Symfony\Component\PropertyInfo\Type;
+use Symfony\Component\TypeInfo\Type\ObjectType;
 
 class EnumModelDescriber implements ModelDescriberInterface
 {
-    public function describe(Model $model, Schema $schema)
+    public const FORCE_NAMES = '_nelmio_enum_force_names';
+
+    public function describe(Model $model, Schema $schema): void
     {
-        $enumClass = $model->getType()->getClassName();
+        $type = $model->getTypeInfo();
+        if (!$type instanceof ObjectType) {
+            return;
+        }
+
+        $enumClass = $type->getClassName();
+        $forceName = isset($model->getSerializationContext()[self::FORCE_NAMES]) && true === $model->getSerializationContext()[self::FORCE_NAMES];
 
         $enums = [];
         foreach ($enumClass::cases() as $enumCase) {
-            $enums[] = $enumCase->value;
+            $enums[] = $forceName ? $enumCase->name : $enumCase->value;
         }
 
         $reflectionEnum = new \ReflectionEnum($enumClass);
-        if ($reflectionEnum->isBacked() && 'int' === $reflectionEnum->getBackingType()->getName()) {
+        if (!$forceName && $reflectionEnum->isBacked() && 'int' === $reflectionEnum->getBackingType()->getName()) {
             $schema->type = 'integer';
         } else {
             $schema->type = 'string';
@@ -37,12 +45,8 @@ class EnumModelDescriber implements ModelDescriberInterface
 
     public function supports(Model $model): bool
     {
-        if (!function_exists('enum_exists')) {
-            return false;
-        }
-
-        return Type::BUILTIN_TYPE_OBJECT === $model->getType()->getBuiltinType()
-            && enum_exists($model->getType()->getClassName())
-            && is_subclass_of($model->getType()->getClassName(), \BackedEnum::class);
+        return $model->getTypeInfo() instanceof ObjectType
+            && enum_exists($model->getTypeInfo()->getClassName())
+            && is_subclass_of($model->getTypeInfo()->getClassName(), \BackedEnum::class);
     }
 }

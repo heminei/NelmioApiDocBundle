@@ -12,9 +12,12 @@
 namespace Nelmio\ApiDocBundle\Tests\DependencyInjection;
 
 use Nelmio\ApiDocBundle\DependencyInjection\Configuration;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\Definition\Processor;
+use Symfony\Component\PropertyInfo\PropertyInfoExtractor;
+use Symfony\Component\PropertyInfo\Type as LegacyType;
 
 class ConfigurationTest extends TestCase
 {
@@ -37,7 +40,8 @@ class ConfigurationTest extends TestCase
                     'path_patterns' => ['/foo'],
                     'host_patterns' => [],
                     'name_patterns' => [],
-                    'with_annotation' => false,
+                    'security' => [],
+                    'with_attribute' => false,
                     'disable_default_routes' => false,
                     'documentation' => [],
                 ],
@@ -52,7 +56,8 @@ class ConfigurationTest extends TestCase
             'default' => [
                 'path_patterns' => ['/foo'],
                 'host_patterns' => [],
-                'with_annotation' => false,
+                'security' => [],
+                'with_attribute' => false,
                 'documentation' => [],
                 'name_patterns' => [],
                 'disable_default_routes' => false,
@@ -60,7 +65,8 @@ class ConfigurationTest extends TestCase
             'internal' => [
                 'path_patterns' => ['/internal'],
                 'host_patterns' => ['^swagger\.'],
-                'with_annotation' => false,
+                'security' => [],
+                'with_attribute' => false,
                 'documentation' => [],
                 'name_patterns' => [],
                 'disable_default_routes' => false,
@@ -68,7 +74,22 @@ class ConfigurationTest extends TestCase
             'commercial' => [
                 'path_patterns' => ['/internal'],
                 'host_patterns' => [],
-                'with_annotation' => false,
+                'security' => [],
+                'with_attribute' => false,
+                'documentation' => [],
+                'name_patterns' => [],
+                'disable_default_routes' => false,
+            ],
+            'secured' => [
+                'path_patterns' => ['/secured'],
+                'host_patterns' => [],
+                'security' => [
+                    'basic' => [
+                        'type' => 'http',
+                        'scheme' => 'basic',
+                    ],
+                ],
+                'with_attribute' => false,
                 'documentation' => [],
                 'name_patterns' => [],
                 'disable_default_routes' => false,
@@ -113,6 +134,21 @@ class ConfigurationTest extends TestCase
                         'type' => 'App\Foo',
                         'groups' => ['group1', ['group2', 'parent' => 'child3']],
                     ],
+                    [
+                        'alias' => 'Foo1',
+                        'type' => 'App\Foo',
+                        'options' => null,
+                    ],
+                    [
+                        'alias' => 'Foo1',
+                        'type' => 'App\Foo',
+                        'options' => ['foo' => 'bar'],
+                    ],
+                    [
+                        'alias' => 'Foo1',
+                        'type' => 'App\Foo',
+                        'serializationContext' => ['useJms' => false, 'foo' => 'bar'],
+                    ],
                 ],
             ],
         ]]);
@@ -121,46 +157,84 @@ class ConfigurationTest extends TestCase
                 'alias' => 'Foo1',
                 'type' => 'App\Foo',
                 'groups' => ['group'],
+                'options' => null,
+                'serializationContext' => [],
                 'areas' => [],
             ],
             [
                 'alias' => 'Foo2',
                 'type' => 'App\Foo',
                 'groups' => [],
+                'options' => null,
+                'serializationContext' => [],
                 'areas' => [],
             ],
             [
                 'alias' => 'Foo3',
                 'type' => 'App\Foo',
                 'groups' => null,
+                'options' => null,
+                'serializationContext' => [],
                 'areas' => [],
             ],
             [
                 'alias' => 'Foo4',
                 'type' => 'App\\Foo',
                 'groups' => ['group'],
+                'options' => null,
+                'serializationContext' => [],
                 'areas' => ['internal'],
             ],
             [
                 'alias' => 'Foo1',
                 'type' => 'App\\Foo',
                 'groups' => null,
+                'options' => null,
+                'serializationContext' => [],
                 'areas' => ['internal'],
             ],
             [
                 'alias' => 'Foo1',
                 'type' => 'App\Foo',
                 'groups' => ['group1', ['group2', 'parent' => 'child3']],
+                'options' => null,
+                'serializationContext' => [],
+                'areas' => [],
+            ],
+            [
+                'alias' => 'Foo1',
+                'type' => 'App\Foo',
+                'groups' => null,
+                'options' => null,
+                'serializationContext' => [],
+                'areas' => [],
+            ],
+            [
+                'alias' => 'Foo1',
+                'type' => 'App\Foo',
+                'groups' => null,
+                'options' => ['foo' => 'bar'],
+                'serializationContext' => [],
+                'areas' => [],
+            ],
+            [
+                'alias' => 'Foo1',
+                'type' => 'App\Foo',
+                'groups' => null,
+                'options' => null,
+                'serializationContext' => [
+                    'useJms' => false,
+                    'foo' => 'bar',
+                ],
                 'areas' => [],
             ],
         ], $config['models']['names']);
     }
 
     /**
-     * @dataProvider provideInvalidConfiguration
-     *
      * @param mixed[] $configuration
      */
+    #[DataProvider('provideInvalidConfiguration')]
     public function testInvalidConfiguration(array $configuration, string $expectedError): void
     {
         self::expectException(InvalidConfigurationException::class);
@@ -179,6 +253,24 @@ class ConfigurationTest extends TestCase
             ],
             'Invalid assets mode "invalid"',
         ];
+
+        if (!method_exists(PropertyInfoExtractor::class, 'getType')) {
+            yield 'type_info cannot be true without Symfony 7 or higher' => [
+                [
+                    'type_info' => true,
+                ],
+                'The type_info option requires Symfony 7 or higher. Please upgrade Symfony or set type_info to false.',
+            ];
+        }
+
+        if (!class_exists(LegacyType::class)) {
+            yield 'type_info cannot be false with Symfony 8 or higher' => [
+                [
+                    'type_info' => false,
+                ],
+                'The type_info option cannot be set to false on Symfony 8 or higher. Please set type_info to true.',
+            ];
+        }
 
         yield 'do not set cache.item_id' => [
             [
@@ -222,5 +314,75 @@ class ConfigurationTest extends TestCase
             ],
             'Model groups must be either `null` or an array.',
         ];
+
+        yield 'invalid options value for model' => [
+            [
+                'models' => [
+                    'names' => [
+                        [
+                            'alias' => 'Foo1',
+                            'type' => 'App\Foo',
+                            'options' => 'invalid_string_value',
+                        ],
+                    ],
+                ],
+            ],
+            'Model options must be either `null` or an array.',
+        ];
+
+        yield 'invalid security schema `type`' => [
+            [
+                'areas' => [
+                    'default' => [
+                        'security' => [
+                            'invalid' => [
+                                'type' => 'SomeInvalidType',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            'Invalid configuration for path "nelmio_api_doc.areas.default.security.invalid.type": Invalid `type` value "SomeInvalidType". Available types are: http, apiKey, openIdConnect, oauth2',
+        ];
+
+        yield 'invalid security schema `scheme`' => [
+            [
+                'areas' => [
+                    'default' => [
+                        'security' => [
+                            'basicAuth' => [
+                                'scheme' => 'SomeInvalidScheme',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            'nelmio_api_doc.areas.default.security.basicAuth.scheme": Invalid `scheme` value "SomeInvalidScheme". Available schemes are: basic, bearer',
+        ];
+
+        yield 'invalid security schema `in`' => [
+            [
+                'areas' => [
+                    'default' => [
+                        'security' => [
+                            'basicAuth' => [
+                                'in' => 'SomeInvalidIn',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            'Invalid configuration for path "nelmio_api_doc.areas.default.security.basicAuth.in": Invalid `in` value "SomeInvalidIn". Available locations are: header, query, cookie',
+        ];
+    }
+
+    public function testDefaultTypeInfo(): void
+    {
+        $config = $this->processor->processConfiguration(new Configuration(), []);
+
+        self::assertSame(
+            !class_exists(LegacyType::class),
+            $config['type_info']
+        );
     }
 }

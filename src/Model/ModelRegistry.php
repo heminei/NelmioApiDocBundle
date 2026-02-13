@@ -14,10 +14,12 @@ namespace Nelmio\ApiDocBundle\Model;
 use Nelmio\ApiDocBundle\Describer\ModelRegistryAwareInterface;
 use Nelmio\ApiDocBundle\ModelDescriber\ModelDescriberInterface;
 use Nelmio\ApiDocBundle\OpenApiPhp\Util;
+use Nelmio\ApiDocBundle\Util\LegacyTypeConverter;
 use OpenApi\Annotations as OA;
 use Psr\Log\LoggerAwareTrait;
 use Psr\Log\NullLogger;
-use Symfony\Component\PropertyInfo\Type;
+use Symfony\Component\PropertyInfo\Type as LegacyType;
+use Symfony\Component\TypeInfo\Type;
 
 final class ModelRegistry
 {
@@ -27,11 +29,6 @@ final class ModelRegistry
      * @var array<string, Model> List of model names to models
      */
     private array $registeredModelNames = [];
-
-    /**
-     * @var Model[]
-     */
-    private array $alternativeNames = [];
 
     /**
      * @var string[] List of hashes of models that have not been registered yet
@@ -47,6 +44,16 @@ final class ModelRegistry
      * @var array<string, string> List of model hashes to model names
      */
     private array $names = [];
+
+    /**
+     * @var array<string, string> List of model hashes to model alternative names
+     */
+    private array $alternativeNames = [];
+
+    /**
+     * @var array<string, array<string, Model>> Map from identifier and schema content to Model
+     */
+    private array $schemaToModelMap = [];
 
     /**
      * @var iterable<ModelDescriberInterface>
@@ -66,24 +73,54 @@ final class ModelRegistry
         $this->modelDescribers = $modelDescribers;
         $this->api = $api;
         $this->logger = new NullLogger();
-        foreach (array_reverse($alternativeNames) as $alternativeName => $criteria) {
-            $this->alternativeNames[] = $model = new Model(new Type('object', false, $criteria['type']), $criteria['groups']);
-            $this->names[$model->getHash()] = $alternativeName;
-            $this->registeredModelNames[$alternativeName] = $model;
-            Util::getSchema($this->api, $alternativeName);
+
+        foreach ($alternativeNames as $alternativeName => $criteria) {
+            $model = new Model(
+                LegacyTypeConverter::createType($criteria['type']),
+                $criteria['groups'],
+                $criteria['options'] ?? [],
+                $criteria['serializationContext'] ?? [],
+            );
+
+            $this->alternativeNames[$model->getHash()] = $alternativeName;
+
+            $this->register($model);
         }
     }
 
     public function register(Model $model): string
     {
         $hash = $model->getHash();
+
+        $identifier = $this->determineModelName($model);
+
+        $schema = null;
+        if (!isset($this->names[$hash])) {
+            $this->names[$hash] = $name = $this->generateUniqueModelName($model);
+            $this->registeredModelNames[$name] = $model;
+
+            $schema = $this->describeSchema($model, null);
+            // Only try to match schemas if we successfully got one
+            if (null !== $schema) {
+                $schemaJson = json_encode($schema);
+                if (isset($this->schemaToModelMap[$identifier][$schemaJson])) {
+                    $existingModel = $this->schemaToModelMap[$identifier][$schemaJson];
+                    $newHash = $existingModel->getHash();
+                    unset($this->names[$hash], $this->registeredModelNames[$name]);
+
+                    return OA\Components::SCHEMA_REF.$this->names[$newHash];
+                }
+            }
+        }
+
         if (!isset($this->models[$hash])) {
             $this->models[$hash] = $model;
             $this->unregistered[] = $hash;
-        }
-        if (!isset($this->names[$hash])) {
-            $this->names[$hash] = $this->generateModelName($model);
-            $this->registeredModelNames[$this->names[$hash]] = $model;
+            $this->unregistered = array_unique($this->unregistered);
+            // Only store schema if it was successfully generated
+            if (null !== $schema) {
+                $this->schemaToModelMap[$identifier][$schemaJson ?? json_encode($schema)] = $model;
+            }
         }
 
         // Reserve the name
@@ -93,61 +130,91 @@ final class ModelRegistry
     }
 
     /**
+     * Describe the Model using the first modelDescriber that supports it.
+     *
+     * @param string|null $name If a name is given, the schema will be registered
+     *
+     * @return OA\Schema|null If no modelDescriber supports the schema, null is returned ; otherwise an instance of OA\Schema
+     */
+    private function describeSchema(Model $model, ?string $name): ?OA\Schema
+    {
+        foreach ($this->modelDescribers as $modelDescriber) {
+            if ($modelDescriber instanceof ModelRegistryAwareInterface) {
+                $modelDescriber->setModelRegistry($this);
+            }
+            if ($modelDescriber->supports($model)) {
+                if (null === $name) {
+                    $schema = new OA\Schema([]);
+                } else {
+                    $schema = Util::getSchema($this->api, $name);
+                }
+                $modelDescriber->describe($model, $schema);
+
+                return $schema;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @internal
      */
     public function registerSchemas(): void
     {
-        while (count($this->unregistered)) {
-            $tmp = [];
-            foreach ($this->unregistered as $hash) {
-                $tmp[$this->names[$hash]] = $this->models[$hash];
-            }
+        while (\count($this->unregistered)) {
+            $unregistered = $this->unregistered;
             $this->unregistered = [];
 
-            foreach ($tmp as $name => $model) {
-                $schema = null;
-                foreach ($this->modelDescribers as $modelDescriber) {
-                    if ($modelDescriber instanceof ModelRegistryAwareInterface) {
-                        $modelDescriber->setModelRegistry($this);
-                    }
-                    if ($modelDescriber->supports($model)) {
-                        $schema = Util::getSchema($this->api, $name);
-                        $modelDescriber->describe($model, $schema);
-
-                        break;
-                    }
-                }
+            foreach ($unregistered as $hash) {
+                $name = $this->names[$hash];
+                $model = $this->models[$hash];
+                $schema = $this->describeSchema($model, $name);
 
                 if (null === $schema) {
-                    $errorMessage = sprintf('Schema of type "%s" can\'t be generated, no describer supports it.', $this->typeToString($model->getType()));
-                    if (Type::BUILTIN_TYPE_OBJECT === $model->getType()->getBuiltinType() && !class_exists($className = $model->getType()->getClassName())) {
-                        $errorMessage .= sprintf(' Class "\\%s" does not exist, did you forget a use statement, or typed it wrong?', $className);
+                    $type = $model->getTypeInfo();
+
+                    $errorMessage = \sprintf('Schema of type "%s" can\'t be generated, no describer supports it.', $this->typeToString($type));
+                    if ($type instanceof Type\ObjectType && !class_exists($className = $type->getClassName())) {
+                        $errorMessage .= \sprintf(' Class "%s" does not exist, did you forget a use statement, or typed it wrong?', $className);
                     }
                     throw new \LogicException($errorMessage);
                 }
             }
         }
-
-        if ([] === $this->unregistered && [] !== $this->alternativeNames) {
-            foreach ($this->alternativeNames as $model) {
-                $this->register($model);
-            }
-            $this->alternativeNames = [];
-            $this->registerSchemas();
-        }
     }
 
-    private function generateModelName(Model $model): string
+    private function determineModelName(Model $model): string
     {
-        $name = $base = $this->getTypeShortName($model->getType());
+        $hash = $model->getHash();
+
+        // 1. From the alternative names configuration
+        if (isset($this->alternativeNames[$hash])) {
+            return $this->alternativeNames[$hash];
+        }
+
+        // 2. From the model itself (e.g. #[Model(name: "MyModel")])
+        if (null !== $model->name) {
+            return $model->name;
+        }
+
+        $type = $model->getTypeInfo();
+
+        // 3. Generate from the type
+        return $this->getTypeShortName($type);
+    }
+
+    private function generateUniqueModelName(Model $model): string
+    {
+        $name = $base = $this->determineModelName($model);
         $names = array_column(
-            $this->api->components instanceof OA\Components && is_array($this->api->components->schemas) ? $this->api->components->schemas : [],
+            $this->api->components instanceof OA\Components && \is_array($this->api->components->schemas) ? $this->api->components->schemas : [],
             'schema'
         );
         $i = 1;
         while (\in_array($name, $names, true)) {
             if (isset($this->registeredModelNames[$name])) {
-                $this->logger->info(sprintf('Can not assign a name for the model, the name "%s" has already been taken.', $name), [
+                $this->logger->info(\sprintf('Can not assign a name for the model, the name "%s" has already been taken.', $name), [
                     'model' => $this->modelToArray($model),
                     'taken_by' => $this->modelToArray($this->registeredModelNames[$name]),
                 ]);
@@ -164,32 +231,43 @@ final class ModelRegistry
      */
     private function modelToArray(Model $model): array
     {
-        $getType = function (Type $type) use (&$getType) {
-            return [
-                'class' => $type->getClassName(),
-                'built_in_type' => $type->getBuiltinType(),
-                'nullable' => $type->isNullable(),
-                'collection' => $type->isCollection(),
-                'collection_key_types' => $type->isCollection() ? array_map($getType, $type->getCollectionKeyTypes()) : null,
-                'collection_value_types' => $type->isCollection() ? array_map($getType, $type->getCollectionValueTypes()) : null,
-            ];
-        };
+        $type = $model->getTypeInfo();
+
+        $dataType = $this->typeToString($type);
 
         return [
-            'type' => $getType($model->getType()),
+            'type' => $dataType,
             'options' => $model->getOptions(),
             'groups' => $model->getGroups(),
             'serialization_context' => $model->getSerializationContext(),
         ];
     }
 
-    private function getTypeShortName(Type $type): string
+    private function getTypeShortName(LegacyType|Type $type): string
     {
-        if (null !== $collectionType = $this->getCollectionValueType($type)) {
+        if ($type instanceof Type) {
+            if ($type instanceof Type\CollectionType) {
+                return $this->getTypeShortName($type->getCollectionValueType()).'[]';
+            }
+
+            if ($type instanceof Type\ObjectType) {
+                $parts = explode('\\', $type->getClassName());
+
+                return end($parts);
+            }
+
+            if ($type instanceof Type\NullableType) {
+                return $this->getTypeShortName($type->getWrappedType());
+            }
+
+            return $type->__toString();
+        }
+
+        if (null !== $collectionType = ($type->getCollectionValueTypes()[0] ?? null)) {
             return $this->getTypeShortName($collectionType).'[]';
         }
 
-        if (Type::BUILTIN_TYPE_OBJECT === $type->getBuiltinType()) {
+        if (LegacyType::BUILTIN_TYPE_OBJECT === $type->getBuiltinType()) {
             $parts = explode('\\', $type->getClassName());
 
             return end($parts);
@@ -198,23 +276,22 @@ final class ModelRegistry
         return $type->getBuiltinType();
     }
 
-    private function typeToString(Type $type): string
+    private function typeToString(LegacyType|Type $type): string
     {
-        if (Type::BUILTIN_TYPE_OBJECT === $type->getBuiltinType()) {
-            return '\\'.$type->getClassName();
-        } elseif ($type->isCollection()) {
-            if (null !== $collectionType = $this->getCollectionValueType($type)) {
-                return $this->typeToString($collectionType).'[]';
-            } else {
-                return 'mixed[]';
-            }
-        } else {
-            return $type->getBuiltinType();
+        if ($type instanceof Type) {
+            return $type->__toString();
         }
-    }
 
-    private function getCollectionValueType(Type $type): ?Type
-    {
-        return $type->getCollectionValueTypes()[0] ?? null;
+        if (LegacyType::BUILTIN_TYPE_OBJECT === $type->getBuiltinType()) {
+            return $type->getClassName();
+        } elseif ($type->isCollection()) {
+            if (null !== $collectionType = ($type->getCollectionValueTypes()[0] ?? null)) {
+                return $this->typeToString($collectionType).'[]';
+            }
+
+            return 'mixed[]';
+        }
+
+        return $type->getBuiltinType();
     }
 }

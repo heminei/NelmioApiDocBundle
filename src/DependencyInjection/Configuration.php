@@ -11,9 +11,12 @@
 
 namespace Nelmio\ApiDocBundle\DependencyInjection;
 
+use Nelmio\ApiDocBundle\Describer\OperationIdGeneration;
 use Nelmio\ApiDocBundle\Render\Html\AssetsMode;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
+use Symfony\Component\PropertyInfo\PropertyInfoExtractor;
+use Symfony\Component\PropertyInfo\Type as LegacyType;
 
 final class Configuration implements ConfigurationInterface
 {
@@ -25,13 +28,30 @@ final class Configuration implements ConfigurationInterface
 
         $rootNode
             ->children()
+                ->booleanNode('type_info')
+                    ->info('Use the symfony/type-info component for determining types.')
+                    ->defaultValue(static fn (): bool => !class_exists(LegacyType::class))
+                    ->validate()
+                        ->ifTrue(static fn ($v) => true === $v && !method_exists(PropertyInfoExtractor::class, 'getType'))
+                        ->thenInvalid('The type_info option requires Symfony 7 or higher. Please upgrade Symfony or set type_info to false.')
+                    ->end()
+                    ->validate()
+                        ->ifTrue(static fn ($v) => false === $v && !class_exists(LegacyType::class))
+                        ->thenInvalid('The type_info option cannot be set to false on Symfony 8 or higher. Please set type_info to true.')
+                    ->end()
+                ->end()
                 ->booleanNode('use_validation_groups')
-                    ->info('If true, `groups` passed to @Model annotations will be used to limit validation constraints')
+                    ->info('If true, `groups` passed to #[Model] attributes will be used to limit validation constraints')
                     ->defaultFalse()
+                ->end()
+                ->enumNode('operation_id_generation')
+                    ->info('How to generate operation ids')
+                    ->values([...OperationIdGeneration::cases(), ...array_map(static fn (OperationIdGeneration $operationId): string => $operationId->value, OperationIdGeneration::cases())])
+                    ->defaultValue(OperationIdGeneration::ALWAYS_PREPEND)
                 ->end()
                 ->arrayNode('cache')
                     ->validate()
-                        ->ifTrue(function ($v) { return null !== $v['item_id'] && null === $v['pool']; })
+                        ->ifTrue(static function ($v) { return null !== $v['item_id'] && null === $v['pool']; })
                         ->thenInvalid('Can not set cache.item_id if cache.pool is null')
                     ->end()
                     ->children()
@@ -77,6 +97,11 @@ final class Configuration implements ConfigurationInterface
                             ->addDefaultsIfNotSet()
                             ->ignoreExtraKeys(false)
                         ->end()
+                        ->arrayNode('stoplight_config')
+                            ->info('https://docs.stoplight.io/docs/elements/b074dc47b2826-elements-configuration-options')
+                            ->addDefaultsIfNotSet()
+                            ->ignoreExtraKeys(false)
+                        ->end()
                     ->end()
                 ->end()
                 ->arrayNode('areas')
@@ -86,24 +111,25 @@ final class Configuration implements ConfigurationInterface
                             'default' => [
                                 'path_patterns' => [],
                                 'host_patterns' => [],
-                                'with_annotation' => false,
+                                'with_attribute' => false,
                                 'documentation' => [],
                                 'name_patterns' => [],
                                 'disable_default_routes' => false,
                                 'cache' => [],
+                                'security' => [],
                             ],
                         ]
                     )
                     ->beforeNormalization()
-                        ->ifTrue(function ($v) {
-                            return 0 === count($v) || isset($v['path_patterns']) || isset($v['host_patterns']) || isset($v['documentation']);
+                        ->ifTrue(static function ($v) {
+                            return 0 === \count($v) || isset($v['path_patterns']) || isset($v['host_patterns']) || isset($v['documentation']);
                         })
-                        ->then(function ($v) {
+                        ->then(static function ($v): array {
                             return ['default' => $v];
                         })
                     ->end()
                     ->validate()
-                        ->ifTrue(function ($v) {
+                        ->ifTrue(static function ($v) {
                             return !isset($v['default']);
                         })
                         ->thenInvalid('You must specify a `default` area under `nelmio_api_doc.areas`.')
@@ -127,13 +153,45 @@ final class Configuration implements ConfigurationInterface
                                 ->example(['^api_v1'])
                                 ->prototype('scalar')->end()
                             ->end()
-                            ->booleanNode('with_annotation')
+                            ->arrayNode('security')
+                                ->defaultValue([])
+                                ->example(['bearerAuth' => ['type' => 'http', 'scheme' => 'bearer']])
+                                ->info('Security schemes to use for this area')
+                                ->useAttributeAsKey('securityScheme')
+                                ->arrayPrototype()
+                                    ->children()
+                                        ->scalarNode('type')
+                                            ->validate()
+                                                ->ifNotInArray($securityTypes = ['http', 'apiKey', 'openIdConnect', 'oauth2'])
+                                                ->thenInvalid('Invalid `type` value %s. Available types are: '.implode(', ', $securityTypes))
+                                            ->end()
+                                        ->end()
+                                        ->scalarNode('scheme')
+                                            ->validate()
+                                                ->ifNotInArray($schemes = ['basic', 'bearer'])
+                                                ->thenInvalid('Invalid `scheme` value %s. Available schemes are: '.implode(', ', $schemes))
+                                            ->end()
+                                        ->end()
+                                        ->scalarNode('in')
+                                            ->validate()
+                                                ->ifNotInArray($in = ['header', 'query', 'cookie'])
+                                                ->thenInvalid('Invalid `in` value %s. Available locations are: '.implode(', ', $in))
+                                            ->end()
+                                        ->end()
+                                        ->scalarNode('name')->end()
+                                        ->scalarNode('description')->end()
+                                        ->scalarNode('openIdConnectUrl')->end()
+                                    ->end()
+                                    ->ignoreExtraKeys(false)
+                                ->end()
+                            ->end()
+                            ->booleanNode('with_attribute')
                                 ->defaultFalse()
-                                ->info('whether to filter by annotation')
+                                ->info('whether to filter by attributes')
                             ->end()
                             ->booleanNode('disable_default_routes')
                                 ->defaultFalse()
-                                ->info('if set disables default routes without annotations')
+                                ->info('if set disables default routes without attributes')
                             ->end()
                             ->arrayNode('documentation')
                                 ->useAttributeAsKey('key')
@@ -171,9 +229,20 @@ final class Configuration implements ConfigurationInterface
                                     ->variableNode('groups')
                                         ->defaultValue(null)
                                         ->validate()
-                                            ->ifTrue(function ($v) { return null !== $v && !is_array($v); })
+                                            ->ifTrue(static function ($v) { return null !== $v && !\is_array($v); })
                                             ->thenInvalid('Model groups must be either `null` or an array.')
                                         ->end()
+                                    ->end()
+                                    ->variableNode('options')
+                                        ->defaultValue(null)
+                                        ->validate()
+                                            ->ifTrue(static function ($v) { return null !== $v && !\is_array($v); })
+                                            ->thenInvalid('Model options must be either `null` or an array.')
+                                        ->end()
+                                    ->end()
+                                    ->arrayNode('serializationContext')
+                                        ->defaultValue([])
+                                        ->prototype('variable')->end()
                                     ->end()
                                     ->arrayNode('areas')
                                         ->defaultValue([])

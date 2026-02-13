@@ -11,14 +11,12 @@
 
 namespace Nelmio\ApiDocBundle\Tests\Functional;
 
-use Doctrine\Common\Annotations\Reader;
 use Nelmio\ApiDocBundle\OpenApiPhp\Util;
-use Nelmio\ApiDocBundle\Tests\Helper;
 use OpenApi\Annotations as OAAnnotations;
 use OpenApi\Attributes as OAAttributes;
 use OpenApi\Generator;
-use Symfony\Component\HttpKernel\Kernel;
-use Symfony\Component\Serializer\Annotation\SerializedName;
+use PHPUnit\Framework\Attributes\DataProvider;
+use Symfony\Component\PropertyInfo\Type as LegacyType;
 
 class FunctionalTest extends WebTestCase
 {
@@ -44,9 +42,7 @@ class FunctionalTest extends WebTestCase
         $this->assertNotHasPath('/api/admin', $api);
     }
 
-    /**
-     * @dataProvider provideArticleRoute
-     */
+    #[DataProvider('provideArticleRoute')]
     public function testFetchArticleAction(string $articleRoute): void
     {
         $operation = $this->getOperation($articleRoute, 'get');
@@ -59,19 +55,15 @@ class FunctionalTest extends WebTestCase
         $articleModel = $this->getModel('Article');
         self::assertCount(1, $articleModel->properties);
         $this->assertHasProperty('author', $articleModel);
-        self::assertSame('#/components/schemas/User2', Util::getProperty($articleModel, 'author')->ref);
+        self::assertSame('#/components/schemas/User', Util::getProperty($articleModel, 'author')->ref);
         $this->assertNotHasProperty('author', Util::getProperty($articleModel, 'author'));
     }
 
     public static function provideArticleRoute(): \Generator
     {
-        if (interface_exists(Reader::class)) {
-            yield 'Annotations' => ['/api/article/{id}'];
-        }
+        yield 'Annotations' => ['/api/article/{id}'];
 
-        if (\PHP_VERSION_ID >= 80100) {
-            yield 'Attributes' => ['/api/article_attributes/{id}'];
-        }
+        yield 'Attributes' => ['/api/article_attributes/{id}'];
     }
 
     public function testFilteredAction(): void
@@ -83,9 +75,8 @@ class FunctionalTest extends WebTestCase
 
     /**
      * Tests that the paths are automatically resolved in Swagger annotations.
-     *
-     * @dataProvider swaggerActionPathsProvider
      */
+    #[DataProvider('swaggerActionPathsProvider')]
     public function testSwaggerAction(string $path): void
     {
         $operation = $this->getOperation($path, 'get');
@@ -114,9 +105,7 @@ class FunctionalTest extends WebTestCase
         $this->assertHasParameter('Accept-Version', 'header', $operation);
     }
 
-    /**
-     * @dataProvider implicitSwaggerActionMethodsProvider
-     */
+    #[DataProvider('implicitSwaggerActionMethodsProvider')]
     public function testImplicitSwaggerAction(string $method): void
     {
         $operation = $this->getOperation('/api/swagger/implicit', $method);
@@ -126,7 +115,7 @@ class FunctionalTest extends WebTestCase
         $this->assertHasResponse('201', $operation);
         $response = $this->getOperationResponse($operation, '201');
         self::assertEquals('Operation automatically detected', $response->description);
-        self::assertEquals('#/components/schemas/User', $response->content['application/json']->schema->ref);
+        self::assertEquals('#/components/schemas/User2', $response->content['application/json']->schema->ref);
 
         self::assertInstanceOf(OAAnnotations\RequestBody::class, $operation->requestBody);
         $requestBody = $operation->requestBody;
@@ -171,10 +160,10 @@ class FunctionalTest extends WebTestCase
 
     public function testApiPlatform(): void
     {
-        $operation = $this->getOperation('/api/dummies', 'get');
-        $operation = $this->getOperation('/api/foo', 'get');
-        $operation = $this->getOperation('/api/foo', 'post');
-        $operation = $this->getOperation('/api/dummies/{id}', 'get');
+        $this->getOperation('/api/dummies', 'get');
+        $this->getOperation('/api/foo', 'get');
+        $this->getOperation('/api/foo', 'post');
+        $this->getOperation('/api/dummies/{id}', 'get');
     }
 
     public function testUserModel(): void
@@ -221,25 +210,26 @@ class FunctionalTest extends WebTestCase
                     ],
                     'users' => [
                         'items' => [
-                            '$ref' => '#/components/schemas/User',
+                            '$ref' => '#/components/schemas/User2',
                         ],
                         'type' => 'array',
                     ],
                     'friend' => [
                         'nullable' => true,
                         'oneOf' => [
-                            ['$ref' => '#/components/schemas/User'],
+                            ['$ref' => '#/components/schemas/User2'],
                         ],
                     ],
                     'friends' => [
                         'nullable' => true,
                         'items' => [
-                            '$ref' => '#/components/schemas/User',
+                            '$ref' => '#/components/schemas/User2',
                         ],
                         'type' => 'array',
+                        'default' => [],
                     ],
                     'dummy' => [
-                        '$ref' => '#/components/schemas/Dummy2',
+                        '$ref' => '#/components/schemas/Dummy',
                     ],
                     'status' => [
                         'type' => 'string',
@@ -250,8 +240,11 @@ class FunctionalTest extends WebTestCase
                         'format' => 'date-time',
                     ],
                 ],
-                'schema' => 'User',
+                'schema' => 'User2',
                 'required' => [
+                    'email',
+                    'location',
+                    'friendsNumber',
                     'creationDate',
                     'users',
                     'status',
@@ -259,7 +252,7 @@ class FunctionalTest extends WebTestCase
                     'dummy',
                 ],
             ],
-            json_decode($this->getModel('User')->toJson(), true)
+            json_decode($this->getModel('User2')->toJson(), true)
         );
     }
 
@@ -365,7 +358,7 @@ class FunctionalTest extends WebTestCase
             'type' => 'object',
             'properties' => [
                 'quz' => [
-                    '$ref' => '#/components/schemas/User',
+                    '$ref' => '#/components/schemas/User2',
                 ],
             ],
             'required' => ['quz'],
@@ -373,9 +366,32 @@ class FunctionalTest extends WebTestCase
         ], json_decode($this->getModel('FormWithModel')->toJson(), true));
     }
 
-    /**
-     * @dataProvider provideSecurityRoute
-     */
+    public function testFormSupportWithRenamedModel(): void
+    {
+        self::assertEquals([
+            'type' => 'object',
+            'properties' => [
+                'quz' => [
+                    '$ref' => '#/components/schemas/User2',
+                ],
+            ],
+            'required' => ['quz'],
+            'schema' => 'FormWithModel',
+        ], json_decode($this->getModel('FormWithModel')->toJson(), true));
+
+        self::assertEquals([
+            'type' => 'object',
+            'properties' => [
+                'quz' => [
+                    '$ref' => '#/components/schemas/User2',
+                ],
+            ],
+            'required' => ['quz'],
+            'schema' => 'RenamedFormWithModel',
+        ], json_decode($this->getModel('RenamedFormWithModel')->toJson(), true));
+    }
+
+    #[DataProvider('provideSecurityRoute')]
     public function testSecurityAction(string $route): void
     {
         $operation = $this->getOperation($route, 'get');
@@ -392,14 +408,10 @@ class FunctionalTest extends WebTestCase
     {
         yield 'Annotations' => ['/api/security'];
 
-        if (\PHP_VERSION_ID >= 80100) {
-            yield 'Attributes' => ['/api/security_attributes'];
-        }
+        yield 'Attributes' => ['/api/security_attributes'];
     }
 
-    /**
-     * @dataProvider provideSecurityOverrideRoute
-     */
+    #[DataProvider('provideSecurityOverrideRoute')]
     public function testSecurityOverrideAction(string $route): void
     {
         $operation = $this->getOperation($route, 'get');
@@ -410,17 +422,11 @@ class FunctionalTest extends WebTestCase
     {
         yield 'Annotations' => ['/api/securityOverride'];
 
-        if (\PHP_VERSION_ID >= 80100) {
-            yield 'Attributes' => ['/api/security_override_attributes'];
-        }
+        yield 'Attributes' => ['/api/security_override_attributes'];
     }
 
     public function testInlinePHP81Parameters(): void
     {
-        if (\PHP_VERSION_ID < 80100) {
-            self::markTestSkipped('Attributes require PHP 8.1');
-        }
-
         $operation = $this->getOperation('/api/inline_path_parameters', 'get');
         self::assertCount(1, $operation->parameters);
         self::assertInstanceOf(OAAttributes\PathParameter::class, $operation->parameters[0]);
@@ -440,11 +446,7 @@ class FunctionalTest extends WebTestCase
 
     public function testSymfonyConstraintDocumentation(): void
     {
-        if (TestKernel::isAttributesAvailable()) {
-            $modelName = 'SymfonyConstraints81';
-        } else {
-            $modelName = 'SymfonyConstraints80';
-        }
+        $modelName = 'SymfonyConstraints';
 
         $expected = [
             'required' => [
@@ -468,6 +470,7 @@ class FunctionalTest extends WebTestCase
                 'propertyGreaterThanDate',
                 'propertyGreaterThanOrEqual',
                 'propertyGreaterThanOrEqualDate',
+                'propertyWithCompoundValidationRule',
             ],
             'properties' => [
                 'propertyNotBlank' => [
@@ -540,9 +543,6 @@ class FunctionalTest extends WebTestCase
                     'type' => 'string',
                     'format' => 'date-time',
                 ],
-                'propertyWithCompoundValidationRule' => [
-                    'type' => 'integer',
-                ],
                 'propertyGreaterThan' => [
                     'type' => 'integer',
                     'exclusiveMinimum' => true,
@@ -560,21 +560,17 @@ class FunctionalTest extends WebTestCase
                     'type' => 'string',
                     'format' => 'date-time',
                 ],
+                'propertyWithCompoundValidationRule' => [
+                    'type' => 'integer',
+                    'maximum' => 5,
+                    'exclusiveMaximum' => true,
+                    'minimum' => 0,
+                    'exclusiveMinimum' => true,
+                ],
             ],
             'type' => 'object',
             'schema' => $modelName,
         ];
-
-        if (Helper::isCompoundValidatorConstraintSupported()) {
-            $expected['required'][] = 'propertyWithCompoundValidationRule';
-            $expected['properties']['propertyWithCompoundValidationRule'] = [
-                'type' => 'integer',
-                'maximum' => 5,
-                'exclusiveMaximum' => true,
-                'minimum' => 0,
-                'exclusiveMinimum' => true,
-            ];
-        }
 
         self::assertEquals($expected, json_decode($this->getModel($modelName)->toJson(), true));
     }
@@ -605,15 +601,7 @@ class FunctionalTest extends WebTestCase
 
     public function testSerializedNameAction(): void
     {
-        if (!class_exists(SerializedName::class)) {
-            self::markTestSkipped('Annotation @SerializedName doesn\'t exist.');
-        }
-
-        if (TestKernel::isAttributesAvailable()) {
-            $model = $this->getModel('SerializedNameEntity');
-        } else {
-            $model = $this->getModel('SerializedNameEnt');
-        }
+        $model = $this->getModel('SerializedNameEntity');
 
         self::assertCount(2, $model->properties);
 
@@ -647,9 +635,11 @@ class FunctionalTest extends WebTestCase
                 'nullableComplex' => [
                     'nullable' => true,
                     'oneOf' => [
-                        [
+                        class_exists(LegacyType::class) ? [
                             'type' => 'integer',
                             'nullable' => true,
+                        ] : [
+                            'type' => 'integer',
                         ],
                         [
                             'type' => 'array',
@@ -662,12 +652,17 @@ class FunctionalTest extends WebTestCase
                 'complexNested' => [
                     'nullable' => true,
                     'oneOf' => [
-                        [
+                        class_exists(LegacyType::class) ? [
                             'type' => 'array',
                             'items' => [
                                 '$ref' => '#/components/schemas/CompoundEntityNested',
                             ],
                             'nullable' => true,
+                        ] : [
+                            'type' => 'array',
+                            'items' => [
+                                '$ref' => '#/components/schemas/CompoundEntityNested',
+                            ],
                         ],
                         [
                             'type' => 'string',
@@ -717,9 +712,11 @@ class FunctionalTest extends WebTestCase
                 'nullableComplex' => [
                     'nullable' => true,
                     'oneOf' => [
-                        [
+                        class_exists(LegacyType::class) ? [
                             'type' => 'integer',
                             'nullable' => true,
+                        ] : [
+                            'type' => 'integer',
                         ],
                         [
                             'type' => 'array',
@@ -732,12 +729,17 @@ class FunctionalTest extends WebTestCase
                 'complexNested' => [
                     'nullable' => true,
                     'oneOf' => [
-                        [
+                        class_exists(LegacyType::class) ? [
                             'type' => 'array',
                             'items' => [
                                 '$ref' => '#/components/schemas/CompoundEntityNested',
                             ],
                             'nullable' => true,
+                        ] : [
+                            'type' => 'array',
+                            'items' => [
+                                '$ref' => '#/components/schemas/CompoundEntityNested',
+                            ],
                         ],
                         [
                             'type' => 'string',
@@ -795,11 +797,7 @@ class FunctionalTest extends WebTestCase
 
     public function testModelsWithDiscriminatorMapAreLoadedWithOpenApiPolymorphism(): void
     {
-        if (TestKernel::isAttributesAvailable()) {
-            $model = $this->getModel('SymfonyDiscriminator81');
-        } else {
-            $model = $this->getModel('SymfonyDiscriminator80');
-        }
+        $model = $this->getModel('SymfonyDiscriminator');
 
         self::assertInstanceOf(OAAnnotations\Discriminator::class, $model->discriminator);
         self::assertSame('type', $model->discriminator->propertyName);
@@ -837,9 +835,6 @@ class FunctionalTest extends WebTestCase
         self::assertFalse($model->additionalProperties);
     }
 
-    /**
-     * @requires PHP >= 8.1
-     */
     public function testEnumSupport(): void
     {
         $model = $this->getModel('ArticleType81');
@@ -885,15 +880,78 @@ class FunctionalTest extends WebTestCase
 
     public function testEntitiesWithOverriddenSchemaTypeDoNotReadOtherProperties(): void
     {
-        if (TestKernel::isAttributesAvailable()) {
-            $model = $this->getModel('EntityWithAlternateType81');
-        } else {
-            $model = $this->getModel('EntityWithAlternateType80');
-        }
+        $model = $this->getModel('EntityWithAlternateType');
 
         self::assertSame('array', $model->type);
         self::assertSame('string', $model->items->type);
         self::assertSame(Generator::UNDEFINED, $model->properties);
+    }
+
+    public function testEntityWithUuid(): void
+    {
+        self::assertEquals([
+            'schema' => 'EntityWithUuid',
+            'type' => 'object',
+            'required' => ['id', 'name'],
+            'properties' => [
+                'id' => [
+                    'type' => 'string',
+                    'format' => 'uuid',
+                ],
+                'name' => [
+                    'type' => 'string',
+                ],
+            ],
+        ], json_decode($this->getModel('EntityWithUuid')->toJson(), true));
+    }
+
+    public function testEntityWithUlid(): void
+    {
+        self::assertEquals([
+            'schema' => 'EntityWithUlid',
+            'type' => 'object',
+            'required' => ['id', 'name'],
+            'properties' => [
+                'id' => [
+                    'type' => 'string',
+                    'format' => 'ulid',
+                ],
+                'name' => [
+                    'type' => 'string',
+                ],
+            ],
+        ], json_decode($this->getModel('EntityWithUlid')->toJson(), true));
+    }
+
+    public function testEntityWithTranslatable(): void
+    {
+        self::assertEquals([
+            'schema' => 'EntityWithTranslatable',
+            'type' => 'object',
+            'required' => ['translatable', 'translatableMessage'],
+            'properties' => [
+                'translatable' => [
+                    'type' => 'string',
+                ],
+                'translatableMessage' => [
+                    'type' => 'string',
+                ],
+            ],
+        ], json_decode($this->getModel('EntityWithTranslatable')->toJson(), true));
+    }
+
+    public function testEntityWithIgnoredProperty(): void
+    {
+        self::assertEquals([
+            'schema' => 'EntityWithIgnoredProperty',
+            'type' => 'object',
+            'required' => ['regularProperty'],
+            'properties' => [
+                'regularProperty' => [
+                    'type' => 'string',
+                ],
+            ],
+        ], json_decode($this->getModel('EntityWithIgnoredProperty')->toJson(), true));
     }
 
     public function testEntitiesWithRefInSchemaDoNoReadOtherProperties(): void
@@ -1096,13 +1154,30 @@ class FunctionalTest extends WebTestCase
             'schema' => 'Bar',
             'required' => ['things', 'moreThings'],
             'properties' => [
-                'things' => [
+                'things' => class_exists(LegacyType::class) ? [
                     'type' => 'array',
                     'items' => [],
+                ] : [
+                    'oneOf' => [
+                        [
+                            'type' => 'array',
+                            'items' => [
+                                'nullable' => true,
+                            ],
+                        ],
+                        [
+                            'type' => 'object',
+                            'additionalProperties' => [
+                                'nullable' => true,
+                            ],
+                        ],
+                    ],
                 ],
                 'moreThings' => [
                     'type' => 'array',
-                    'items' => [],
+                    'items' => class_exists(LegacyType::class) ? [] : [
+                        'nullable' => true,
+                    ],
                 ],
             ],
             'type' => 'object',
@@ -1125,12 +1200,19 @@ class FunctionalTest extends WebTestCase
                 'compoundOptions' => [
                     'type' => 'object',
                     'additionalProperties' => [
-                        'oneOf' => [
+                        'oneOf' => class_exists(LegacyType::class) ? [
                             [
                                 'type' => 'string',
                             ],
                             [
                                 'type' => 'integer',
+                            ],
+                        ] : [
+                            [
+                                'type' => 'integer',
+                            ],
+                            [
+                                'type' => 'string',
                             ],
                         ],
                     ],
@@ -1140,12 +1222,19 @@ class FunctionalTest extends WebTestCase
                     'items' => [
                         'type' => 'object',
                         'additionalProperties' => [
-                            'oneOf' => [
+                            'oneOf' => class_exists(LegacyType::class) ? [
                                 [
                                     'type' => 'string',
                                 ],
                                 [
                                     'type' => 'integer',
+                                ],
+                            ] : [
+                                [
+                                    'type' => 'integer',
+                                ],
+                                [
+                                    'type' => 'string',
                                 ],
                             ],
                         ],
@@ -1261,20 +1350,117 @@ class FunctionalTest extends WebTestCase
             'type' => 'object',
         ];
 
-        if (version_compare(Kernel::VERSION, '6.1', '>=')) {
-            array_unshift($expected['required'], 'positiveInt', 'negativeInt');
-            $expected['properties'] += [
-                'positiveInt' => [
-                    'type' => 'integer',
-                    'minimum' => 1,
-                ],
-                'negativeInt' => [
-                    'type' => 'integer',
-                    'maximum' => -1,
-                ],
-            ];
-        }
+        array_unshift($expected['required'], 'positiveInt', 'negativeInt');
+        $expected['properties'] += [
+            'positiveInt' => [
+                'type' => 'integer',
+                'minimum' => 1,
+            ],
+            'negativeInt' => [
+                'type' => 'integer',
+                'maximum' => -1,
+            ],
+        ];
 
         self::assertEquals($expected, json_decode($this->getModel('RangeInteger')->toJson(), true));
+    }
+
+    public function testSecuredApi(): void
+    {
+        $securitySchemes = $this->getOpenApiDefinition('secured')->components->securitySchemes;
+        self::assertCount(2, $securitySchemes);
+
+        $basicAuthScheme = $securitySchemes[0];
+        self::assertInstanceOf(OAAnnotations\SecurityScheme::class, $basicAuthScheme);
+        self::assertSame([
+            'securityScheme' => 'basicAuth',
+            'type' => 'http',
+            'scheme' => 'basic',
+        ], json_decode($basicAuthScheme->toJson(), true));
+
+        $apiKeyAuthScheme = $securitySchemes[1];
+        self::assertInstanceOf(OAAnnotations\SecurityScheme::class, $apiKeyAuthScheme);
+        self::assertSame([
+            'securityScheme' => 'apiKeyAuth',
+            'type' => 'apiKey',
+            'description' => 'API Key Authentication',
+            'name' => 'X-API-Key',
+            'in' => 'header',
+        ], json_decode($apiKeyAuthScheme->toJson(), true));
+
+        $operation = $this->getOperation('/secured/article/{id}', 'get', 'secured');
+
+        self::assertSame([
+            [
+                'basicAuth' => [
+                    'ROLE_USER',
+                ],
+            ],
+            [
+                'apiKeyAuth' => [
+                    'ROLE_USER',
+                ],
+            ],
+        ], $operation->security);
+
+        $operation = $this->getOperation('/secured/article', 'post', 'secured');
+
+        self::assertSame([
+            [
+                'basicAuth' => [
+                    'ROLE_USER',
+                    'ROLE_ADMIN',
+                ],
+            ],
+            [
+                'apiKeyAuth' => [
+                    'ROLE_USER',
+                    'ROLE_ADMIN',
+                ],
+            ],
+        ], $operation->security);
+
+        $operation = $this->getOperation('/secured/article/{id}', 'patch', 'secured');
+
+        self::assertSame([
+            [
+                'basicAuth' => [
+                    'ROLE_USER',
+                    'ROLE_ADMIN',
+                    'ROLE_UPDATE_ARTICLE',
+                ],
+            ],
+            [
+                'apiKeyAuth' => [
+                    'ROLE_USER',
+                    'ROLE_ADMIN',
+                    'ROLE_UPDATE_ARTICLE',
+                ],
+            ],
+        ], $operation->security);
+    }
+
+    public function testModelInParameter(): void
+    {
+        $operation = $this->getOperation('/api/swagger/model-parameter', 'get');
+
+        self::assertSame([
+            'name' => 'user',
+            'in' => 'query',
+            'schema' => [
+                '$ref' => '#/components/schemas/User2',
+            ],
+        ], json_decode($this->getParameter($operation, 'user', 'query')->toJson(), true));
+
+        self::assertSame([
+            'name' => 'list',
+            'in' => 'query',
+            'schema' => [
+                'type' => 'array',
+                'items' => [
+                    '$ref' => '#/components/schemas/Article',
+                ],
+            ],
+        ], json_decode($this->getParameter($operation, 'list', 'query')->toJson(), true));
     }
 }

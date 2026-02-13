@@ -11,16 +11,14 @@
 
 namespace Nelmio\ApiDocBundle\Tests\Functional;
 
-use ApiPlatform\Core\Annotation\ApiProperty;
 use ApiPlatform\Symfony\Bundle\ApiPlatformBundle;
 use Bazinga\Bundle\HateoasBundle\BazingaHateoasBundle;
 use FOS\RestBundle\FOSRestBundle;
-use Hateoas\Configuration\Embedded;
 use JMS\SerializerBundle\JMSSerializerBundle;
 use Nelmio\ApiDocBundle\NelmioApiDocBundle;
+use Nelmio\ApiDocBundle\Render\Html\AssetsMode;
 use Nelmio\ApiDocBundle\Tests\Functional\Entity\BazingaUser;
-use Nelmio\ApiDocBundle\Tests\Functional\Entity\JMSComplex80;
-use Nelmio\ApiDocBundle\Tests\Functional\Entity\JMSComplex81;
+use Nelmio\ApiDocBundle\Tests\Functional\Entity\JMSComplex;
 use Nelmio\ApiDocBundle\Tests\Functional\Entity\NestedGroup\JMSPicture;
 use Nelmio\ApiDocBundle\Tests\Functional\Entity\PrivateProtectedExposure;
 use Nelmio\ApiDocBundle\Tests\Functional\Entity\SymfonyConstraintsWithValidationGroups;
@@ -34,6 +32,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\HttpKernel\Kernel;
+use Symfony\Component\PropertyInfo\Type as LegacyType;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 
 class TestKernel extends Kernel
@@ -45,6 +44,7 @@ class TestKernel extends Kernel
     public const USE_FOSREST = 3;
     public const USE_VALIDATION_GROUPS = 8;
     public const USE_FORM_CSRF = 16;
+    public const USE_TYPE_INFO = 32;
 
     private int $flag;
 
@@ -63,8 +63,11 @@ class TestKernel extends Kernel
             new ApiPlatformBundle(),
             new NelmioApiDocBundle(),
             new TestBundle(),
-            new FOSRestBundle(),
         ];
+
+        if (self::USE_FOSREST === $this->flag) {
+            $bundles[] = new FOSRestBundle();
+        }
 
         if (self::USE_JMS === $this->flag || self::USE_BAZINGA === $this->flag) {
             $bundles[] = new JMSSerializerBundle();
@@ -79,28 +82,18 @@ class TestKernel extends Kernel
 
     protected function configureRoutes(RoutingConfigurator $routes): void
     {
-        if (self::isAnnotationsAvailable()) {
-            $routes->withPath('/')->import(__DIR__.'/Resources/routes.yaml', 'yaml');
-        } else {
-            $routes->withPath('/')->import(__DIR__.'/Resources/routes-attributes.yaml', 'yaml');
-        }
+        $routes->withPath('/')->import(__DIR__.'/Resources/routes.yaml', 'yaml');
 
         if (self::USE_JMS === $this->flag || self::USE_BAZINGA === $this->flag) {
-            $routes->withPath('/')->import(__DIR__.'/Controller/JMSController.php', self::isAnnotationsAvailable() ? 'annotation' : 'attribute');
+            $routes->withPath('/')->import(__DIR__.'/Controller/JMSController.php', 'attribute');
         }
 
         if (self::USE_BAZINGA === $this->flag) {
-            $routes->withPath('/')->import(__DIR__.'/Controller/BazingaTypedController.php', self::isAnnotationsAvailable() ? 'annotation' : 'attribute');
-
-            try {
-                new \ReflectionMethod(Embedded::class, 'getType');
-                $routes->withPath('/')->import(__DIR__.'/Controller/BazingaTypedController.php', self::isAnnotationsAvailable() ? 'annotation' : 'attribute');
-            } catch (\ReflectionException $e) {
-            }
+            $routes->withPath('/')->import(__DIR__.'/Controller/BazingaTypedController.php', 'attribute');
         }
 
         if (self::USE_FOSREST === $this->flag) {
-            $routes->withPath('/')->import(__DIR__.'/Controller/FOSRestController.php', self::isAnnotationsAvailable() ? 'annotation' : 'attribute');
+            $routes->withPath('/')->import(__DIR__.'/Controller/FOSRestController.php', 'attribute');
         }
     }
 
@@ -112,11 +105,8 @@ class TestKernel extends Kernel
             'test' => null,
             'validation' => null,
             'form' => null,
-            'serializer' => (
-                PHP_VERSION_ID >= 80100 && Kernel::MAJOR_VERSION < 7
-                    ? ['enable_annotations' => true]
-                    : []
-            ) + [
+            'serializer' => [
+                'enable_attributes' => true,
                 'mapping' => [
                     'paths' => [__DIR__.'/Resources/serializer/'],
                 ],
@@ -142,31 +132,24 @@ class TestKernel extends Kernel
 
         $c->loadFromExtension('twig', [
             'strict_variables' => '%kernel.debug%',
-            'exception_controller' => null,
         ]);
 
         $c->loadFromExtension('api_platform', [
             'mapping' => ['paths' => [
-                !class_exists(ApiProperty::class)
-                ? '%kernel.project_dir%/tests/Functional/EntityExcluded/ApiPlatform3'
-                : '%kernel.project_dir%/tests/Functional/EntityExcluded/ApiPlatform2',
+                '%kernel.project_dir%/tests/Functional/EntityExcluded/ApiPlatform3',
             ]],
         ]);
 
-        $c->loadFromExtension('fos_rest', [
-            'format_listener' => [
-                'rules' => [
-                    [
-                        'path' => '^/',
-                        'fallback_format' => 'json',
+        if (self::USE_FOSREST === $this->flag) {
+            $c->loadFromExtension('fos_rest', [
+                'format_listener' => [
+                    'rules' => [
+                        [
+                            'path' => '^/',
+                            'fallback_format' => 'json',
+                        ],
                     ],
                 ],
-            ],
-        ]);
-
-        // If FOSRestBundle 2.8
-        if (class_exists(\FOS\RestBundle\EventListener\ResponseStatusCodeListener::class)) {
-            $c->loadFromExtension('fos_rest', [
                 'exception' => [
                     'enabled' => false,
                     'exception_listener' => false,
@@ -202,47 +185,29 @@ class TestKernel extends Kernel
                 'type' => SymfonyConstraintsWithValidationGroups::class,
                 'groups' => null,
             ],
+            [
+                'alias' => 'JMSComplex',
+                'type' => JMSComplex::class,
+                'groups' => [
+                    'list',
+                    'details',
+                    'User' => ['list'],
+                ],
+            ],
+            [
+                'alias' => 'JMSComplexDefault',
+                'type' => JMSComplex::class,
+                'groups' => null,
+            ],
         ];
-
-        if (self::isAnnotationsAvailable()) {
-            $models = array_merge($models, [
-                [
-                    'alias' => 'JMSComplex',
-                    'type' => JMSComplex80::class,
-                    'groups' => [
-                        'list',
-                        'details',
-                        'User' => ['list'],
-                    ],
-                ],
-                [
-                    'alias' => 'JMSComplexDefault',
-                    'type' => JMSComplex80::class,
-                    'groups' => null,
-                ],
-            ]);
-        } elseif (self::isAttributesAvailable()) {
-            $models = array_merge($models, [
-                [
-                    'alias' => 'JMSComplex',
-                    'type' => JMSComplex81::class,
-                    'groups' => [
-                        'list',
-                        'details',
-                        'User' => ['list'],
-                    ],
-                ],
-                [
-                    'alias' => 'JMSComplexDefault',
-                    'type' => JMSComplex81::class,
-                    'groups' => null,
-                ],
-            ]);
-        }
 
         // Filter routes
         $c->loadFromExtension('nelmio_api_doc', [
-            'use_validation_groups' => boolval(self::USE_VALIDATION_GROUPS === $this->flag),
+            'type_info' => !class_exists(LegacyType::class) || self::USE_TYPE_INFO === $this->flag,
+            'html_config' => [
+                'assets_mode' => AssetsMode::BUNDLE,
+            ],
+            'use_validation_groups' => self::USE_VALIDATION_GROUPS === $this->flag,
             'documentation' => [
                 'info' => [
                     'title' => 'My Default App',
@@ -311,13 +276,28 @@ class TestKernel extends Kernel
                         ],
                     ],
                 ],
+                'secured' => [
+                    'path_patterns' => ['^/secured'],
+                    'security' => [
+                        'basicAuth' => [
+                            'type' => 'http',
+                            'scheme' => 'basic',
+                        ],
+                        'apiKeyAuth' => [
+                            'type' => 'apiKey',
+                            'in' => 'header',
+                            'name' => 'X-API-Key',
+                            'description' => 'API Key Authentication',
+                        ],
+                    ],
+                ],
             ],
             'models' => [
                 'names' => $models,
             ],
         ]);
 
-        if (self::USE_JMS === $this->flag && \PHP_VERSION_ID >= 80100) {
+        if (self::USE_JMS === $this->flag) {
             $c->loadFromExtension('jms_serializer', [
                 'enum_support' => true,
             ]);
@@ -340,23 +320,5 @@ class TestKernel extends Kernel
     public function getLogDir(): string
     {
         return parent::getLogDir().'/'.$this->flag;
-    }
-
-    public static function isAnnotationsAvailable(): bool
-    {
-        if (Kernel::MAJOR_VERSION <= 5) {
-            return true;
-        }
-
-        if (Kernel::MAJOR_VERSION >= 7) {
-            return false;
-        }
-
-        return PHP_VERSION_ID < 80100;
-    }
-
-    public static function isAttributesAvailable(): bool
-    {
-        return PHP_VERSION_ID >= 80100;
     }
 }

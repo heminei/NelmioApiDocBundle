@@ -36,7 +36,7 @@ class ControllerReflector
      */
     public function getReflectionMethod($controller): ?\ReflectionMethod
     {
-        if (is_string($controller)) {
+        if (\is_string($controller)) {
             $controller = $this->getClassAndMethod($controller);
         }
 
@@ -51,7 +51,7 @@ class ControllerReflector
     {
         try {
             return new \ReflectionMethod($class, $method);
-        } catch (\ReflectionException $e) {
+        } catch (\ReflectionException) {
             // In case we can't reflect the controller, we just ignore the route
         }
 
@@ -72,7 +72,7 @@ class ControllerReflector
             $method = $matches[2];
 
             if (!class_exists($class) && $this->container->has($class)) {
-                $class = get_class($this->container->get($class));
+                $class = \get_class($this->container->get($class));
             }
 
             return $this->controllers[$controller] = [$class, $method];

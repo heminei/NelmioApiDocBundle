@@ -21,6 +21,7 @@ use Nelmio\ApiDocBundle\Model\Model;
 use Nelmio\ApiDocBundle\Model\ModelRegistry;
 use Nelmio\ApiDocBundle\OpenApiPhp\Util;
 use OpenApi\Annotations as OA;
+use Symfony\Component\TypeInfo\Type\ObjectType;
 
 class BazingaHateoasModelDescriber implements ModelDescriberInterface, ModelRegistryAwareInterface
 {
@@ -35,7 +36,7 @@ class BazingaHateoasModelDescriber implements ModelDescriberInterface, ModelRegi
         $this->JMSModelDescriber = $JMSModelDescriber;
     }
 
-    public function setModelRegistry(ModelRegistry $modelRegistry)
+    public function setModelRegistry(ModelRegistry $modelRegistry): void
     {
         $this->modelRegistry = $modelRegistry;
         $this->JMSModelDescriber->setModelRegistry($modelRegistry);
@@ -71,7 +72,7 @@ class BazingaHateoasModelDescriber implements ModelDescriberInterface, ModelRegi
 
             $property = Util::getProperty($relationSchema, $relation->getName());
             if (null !== $embedded && method_exists($embedded, 'getType') && null !== $embedded->getType()) {
-                $this->JMSModelDescriber->describeItem($embedded->getType(), $property, $context);
+                $this->JMSModelDescriber->describeItem($embedded->getType(), $property, $context, $model->getSerializationContext());
             } else {
                 $property->type = 'object';
             }
@@ -87,9 +88,14 @@ class BazingaHateoasModelDescriber implements ModelDescriberInterface, ModelRegi
 
     private function getHateoasMetadata(Model $model): ?object
     {
+        $type = $model->getTypeInfo();
+        if (!$type instanceof ObjectType) {
+            return null;
+        }
+
         try {
-            return $this->factory->getMetadataForClass($model->getType()->getClassName());
-        } catch (\ReflectionException $e) {
+            return $this->factory->getMetadataForClass($type->getClassName());
+        } catch (\ReflectionException) {
         }
 
         return null;
@@ -105,7 +111,7 @@ class BazingaHateoasModelDescriber implements ModelDescriberInterface, ModelRegi
     {
         foreach ($relation->getAttributes() as $attribute => $value) {
             $subSubProp = Util::getProperty($subProperty, $attribute);
-            switch (gettype($value)) {
+            switch (\gettype($value)) {
                 case 'integer':
                     $subSubProp->type = 'integer';
                     $subSubProp->default = $value;

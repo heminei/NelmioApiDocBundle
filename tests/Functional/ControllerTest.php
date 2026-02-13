@@ -11,9 +11,18 @@
 
 namespace Nelmio\ApiDocBundle\Tests\Functional;
 
+use JMS\SerializerBundle\JMSSerializerBundle;
+use Nelmio\ApiDocBundle\Describer\OperationIdGeneration;
+use Nelmio\ApiDocBundle\Tests\Functional\Controller\SecuredApiController;
 use OpenApi\Annotations as OA;
+use OpenApi\Processors\CleanUnusedComponents;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Group;
+use Symfony\Component\DependencyInjection\Definition;
+use Symfony\Component\HttpKernel\Attribute\MapRequestPayload;
+use Symfony\Component\HttpKernel\Bundle\Bundle;
 use Symfony\Component\HttpKernel\Kernel;
-use Symfony\Component\HttpKernel\KernelInterface;
+use Symfony\Component\PropertyInfo\Type as LegacyType;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 
 /**
@@ -29,47 +38,36 @@ final class ControllerTest extends WebTestCase
     protected function setUp(): void
     {
         $this->configurableContainerFactory = new ConfigurableContainerFactory();
-
-        static::createClient([], ['HTTP_HOST' => 'api.example.com']);
-    }
-
-    /**
-     * @param array<mixed> $options
-     */
-    protected static function createKernel(array $options = []): KernelInterface
-    {
-        return new NelmioKernel([], null, []);
     }
 
     protected function getOpenApiDefinition(string $area = 'default'): OA\OpenApi
     {
-        return $this->configurableContainerFactory->getContainer()->get(sprintf('nelmio_api_doc.generator.%s', $area))->generate();
+        return $this->configurableContainerFactory->getContainer()->get(\sprintf('nelmio_api_doc.generator.%s', $area))->generate();
     }
 
     /**
-     * @dataProvider provideAnnotationTestCases
-     * @dataProvider provideAttributeTestCases
-     * @dataProvider provideUniversalTestCases
-     *
-     * @param array{name: string, type: string}|null $controller
-     * @param string[]                               $extraConfigs
+     * @param Bundle[]                    $extraBundles
+     * @param array<string, array<mixed>> $extraConfigs     Key is the extension name, value is the config
+     * @param array<string, Definition>   $extraDefinitions
      */
-    public function testControllers(?array $controller, ?string $fixtureName = null, array $extraConfigs = []): void
+    #[DataProvider('provideTestCases')]
+    public function testControllers(?string $controller, ?string $fixtureSuffix = null, array $extraBundles = [], array $extraConfigs = [], array $extraDefinitions = [], ?\Closure $extraRoutes = null): void
     {
-        $controllerName = $controller['name'] ?? null;
-        $controllerType = $controller['type'] ?? null;
+        $fixtureName = null !== $fixtureSuffix ? $controller.'.'.$fixtureSuffix : $controller;
 
-        $fixtureName = $fixtureName ?? $controllerName ?? self::fail('A fixture name must be provided.');
+        $routingConfiguration = static function (RoutingConfigurator &$routes) use ($controller, $extraRoutes) {
+            if (null !== $extraRoutes) {
+                ($extraRoutes)($routes);
+            }
 
-        $routingConfiguration = function (RoutingConfigurator $routes) use ($controllerName, $controllerType) {
-            if (null === $controllerName) {
+            if (null === $controller) {
                 return;
             }
 
-            $routes->withPath('/')->import(__DIR__."/Controller/$controllerName.php", $controllerType);
+            $routes->withPath('/')->import(__DIR__."/Controller/$controller.php", 'attribute');
         };
 
-        $this->configurableContainerFactory->create([], $routingConfiguration, $extraConfigs);
+        $this->configurableContainerFactory->create($extraBundles, $routingConfiguration, $extraConfigs, $extraDefinitions);
 
         $apiDefinition = $this->getOpenApiDefinition();
 
@@ -84,94 +82,618 @@ final class ControllerTest extends WebTestCase
         );
     }
 
-    public static function provideAttributeTestCases(): \Generator
+    #[Group('jms-serializer')]
+    #[Group('hateoas')]
+    public function testJmsModelOptOut(): void
     {
-        if (PHP_VERSION_ID < 80100) {
-            return;
-        }
-
-        $type = Kernel::MAJOR_VERSION === 5 ? 'annotation' : 'attribute';
-
-        yield 'Promoted properties defaults attributes' => [
+        $this->testControllers(
+            'JmsOptOutController',
+            null,
+            [new JMSSerializerBundle()],
             [
-                'name' => 'PromotedPropertiesController81',
-                'type' => $type,
+                'nelmio_api_doc' => [
+                    'models' => [
+                        'use_jms' => true,
+                    ],
+                ],
             ],
-            'PromotedPropertiesDefaults',
-            [__DIR__.'/Configs/AlternativeNamesPHP81Entities.yaml'],
+        );
+    }
+
+    public static function provideTestCases(): \Generator
+    {
+        yield 'Promoted properties defaults attributes' => [
+            'PromotedPropertiesController81',
+            'defaults',
+            [],
+            [],
+            [
+                CleanUnusedComponents::class => (new Definition(CleanUnusedComponents::class))
+                    ->addTag('nelmio_api_doc.swagger.processor', ['priority' => -100])
+                    ->addMethodCall('setEnabled', [true]),
+            ],
         ];
 
-        if (version_compare(Kernel::VERSION, '6.3.0', '>=')) {
-            yield 'https://github.com/nelmio/NelmioApiDocBundle/issues/2209' => [
-                [
-                    'name' => 'Controller2209',
-                    'type' => $type,
-                ],
-            ];
-            yield 'MapQueryString' => [
-                [
-                    'name' => 'MapQueryStringController',
-                    'type' => $type,
-                ],
-            ];
-            yield 'https://github.com/nelmio/NelmioApiDocBundle/issues/2191' => [
-                [
-                    'name' => 'MapQueryStringController',
-                    'type' => $type,
-                ],
-                'MapQueryStringCleanupComponents',
-                [__DIR__.'/Configs/CleanUnusedComponentsProcessor.yaml'],
-            ];
+        yield 'https://github.com/nelmio/NelmioApiDocBundle/issues/2209' => [
+            'Controller2209',
+        ];
 
-            yield 'operationId must always be generated' => [
-                [
-                    'name' => 'OperationIdController',
-                    'type' => $type,
+        yield 'MapQueryString' => [
+            'MapQueryStringController',
+            class_exists(LegacyType::class) ? 'MapQueryStringController' : 'MapQueryStringController-type_info',
+            [],
+            [
+                // Enable serializer
+                'framework' => [
+                    'property_info' => [
+                        'enabled' => true,
+                    ],
+                    'serializer' => [
+                        'enabled' => true,
+                        'enable_attributes' => true,
+                    ],
+                    'validation' => [
+                        'enabled' => true,
+                        'enable_attributes' => true,
+                        'static_method' => [
+                            'loadValidatorMetadata',
+                        ],
+                        'translation_domain' => 'validators',
+                        'email_validation_mode' => 'html5',
+                        'mapping' => [
+                            'paths' => [],
+                        ],
+                        'not_compromised_password' => [
+                            'enabled' => true,
+                            'endpoint' => null,
+                        ],
+                        'auto_mapping' => [],
+                    ],
                 ],
+            ],
+        ];
+
+        yield 'https://github.com/nelmio/NelmioApiDocBundle/issues/2191' => [
+            'MapQueryStringController',
+            class_exists(LegacyType::class) ? 'cleanup-components' : 'cleanup-components-type_info',
+            [],
+            [
+                // Enable serializer
+                'framework' => [
+                    'property_info' => [
+                        'enabled' => true,
+                    ],
+                    'serializer' => [
+                        'enabled' => true,
+                        'enable_attributes' => true,
+                    ],
+                    'validation' => [
+                        'enabled' => true,
+                        'enable_attributes' => true,
+                        'static_method' => [
+                            'loadValidatorMetadata',
+                        ],
+                        'translation_domain' => 'validators',
+                        'email_validation_mode' => 'html5',
+                        'mapping' => [
+                            'paths' => [],
+                        ],
+                        'not_compromised_password' => [
+                            'enabled' => true,
+                            'endpoint' => null,
+                        ],
+                        'auto_mapping' => [],
+                    ],
+                ],
+            ],
+            [
+                CleanUnusedComponents::class => (new Definition(CleanUnusedComponents::class))
+                    ->addTag('nelmio_api_doc.swagger.processor', ['priority' => -100])
+                    ->addMethodCall('setEnabled', [true]),
+            ],
+        ];
+
+        yield 'operationId must always be generated' => [
+            'OperationIdController',
+        ];
+
+        yield 'operationId generation conditionally_prepend' => [
+            'OperationIdController',
+            'conditionally_prepend',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'operation_id_generation' => OperationIdGeneration::CONDITIONALLY_PREPEND,
+                ],
+            ],
+        ];
+
+        yield 'operationId generation conditionally_prepend string' => [
+            'OperationIdController',
+            'conditionally_prepend',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'operation_id_generation' => OperationIdGeneration::CONDITIONALLY_PREPEND->value,
+                ],
+            ],
+        ];
+
+        yield 'operationId generation no_prepend' => [
+            'OperationIdController',
+            'no_prepend',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'operation_id_generation' => OperationIdGeneration::NO_PREPEND,
+                ],
+            ],
+        ];
+
+        yield 'operationId generation no_prepend string' => [
+            'OperationIdController',
+            'no_prepend',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'operation_id_generation' => OperationIdGeneration::NO_PREPEND->value,
+                ],
+            ],
+        ];
+
+        yield 'Symfony 6.3 MapQueryParameter attribute' => [
+            'MapQueryParameterController',
+        ];
+
+        yield 'Symfony 6.3 MapRequestPayload attribute' => [
+            'MapRequestPayloadController',
+            null,
+            [],
+            [
+                // Enable serializer
+                'framework' => [
+                    'property_info' => [
+                        'enabled' => true,
+                    ],
+                    'serializer' => [
+                        'enabled' => true,
+                        'enable_attributes' => true,
+                    ],
+                    'validation' => [
+                        'enabled' => true,
+                        'enable_attributes' => true,
+                        'static_method' => [
+                            'loadValidatorMetadata',
+                        ],
+                        'translation_domain' => 'validators',
+                        'email_validation_mode' => 'html5',
+                        'mapping' => [
+                            'paths' => [],
+                        ],
+                        'not_compromised_password' => [
+                            'enabled' => true,
+                            'endpoint' => null,
+                        ],
+                        'auto_mapping' => [],
+                    ],
+                ],
+            ],
+        ];
+
+        yield 'Create top level Tag from Tag attribute' => [
+            'OpenApiTagController',
+        ];
+
+        yield 'Name collision with groups' => [
+            'ApiController81Collisions',
+            null,
+            [],
+            [
+                // Enable serializer
+                'framework' => [
+                    'property_info' => [
+                        'enabled' => true,
+                    ],
+                    'serializer' => [
+                        'enabled' => true,
+                        'enable_attributes' => true,
+                    ],
+                    'validation' => [
+                        'enabled' => true,
+                        'enable_attributes' => true,
+                        'static_method' => [
+                            'loadValidatorMetadata',
+                        ],
+                        'translation_domain' => 'validators',
+                        'email_validation_mode' => 'html5',
+                        'mapping' => [
+                            'paths' => [],
+                        ],
+                        'not_compromised_password' => [
+                            'enabled' => true,
+                            'endpoint' => null,
+                        ],
+                        'auto_mapping' => [],
+                    ],
+                ],
+            ],
+        ];
+
+        if (property_exists(MapRequestPayload::class, 'type')) {
+            yield 'Symfony 7.1 MapRequestPayload array type' => [
+                'MapRequestPayloadArray',
             ];
         }
-    }
 
-    public static function provideAnnotationTestCases(): \Generator
-    {
-        if (!TestKernel::isAnnotationsAvailable()) {
-            return;
-        }
-
-        if (PHP_VERSION_ID >= 80000) {
-            yield 'Promoted properties defaults annotations' => [
-                [
-                    'name' => 'PromotedPropertiesController80',
-                    'type' => 'annotation',
-                ],
-                'PromotedPropertiesDefaults',
-                [__DIR__.'/Configs/AlternativeNamesPHP80Entities.yaml'],
+        if (version_compare(Kernel::VERSION, '7.1.0', '>=')) {
+            yield 'Symfony 7.1 MapUploadedFile attribute' => [
+                'MapUploadedFileController',
             ];
         }
-    }
 
-    /**
-     * Test cases that are universal and can be run without depending on the existence of a specific feature.
-     */
-    public static function provideUniversalTestCases(): \Generator
-    {
         yield 'https://github.com/nelmio/NelmioApiDocBundle/issues/2224' => [
             null,
             'VendorExtension',
-            [__DIR__.'/Configs/VendorExtension.yaml'],
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'documentation' => [
+                        'info' => [
+                            'title' => 'Test API',
+                            'description' => 'Test API description',
+                            'x-vendor' => [
+                                'test' => 'Test vendor extension',
+                            ],
+                            'x-build' => '#SomeCommitHash',
+                        ],
+                        'components' => [
+                            'schemas' => [
+                                'Test' => [
+                                    'type' => 'string',
+                                    'x-vendor' => [
+                                        'test' => 'Test vendor extension inside schema',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            [
+                StubProcessor::class => (new Definition(StubProcessor::class))
+                    ->addTag('nelmio_api_doc.swagger.processor', ['priority' => -100, 'before' => CleanUnusedComponents::class]),
+            ],
+        ];
+
+        yield 'Security documentation API key' => [
+            'SecuredApiController',
+            'api-key',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'ApiKeyAuth' => [
+                                    'type' => 'apiKey',
+                                    'name' => 'X-API-KEY',
+                                    'in' => 'header',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        yield 'Security documentation basic auth' => [
+            'SecuredApiController',
+            'basic-auth',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'BasicAuth' => [
+                                    'type' => 'http',
+                                    'scheme' => 'basic',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        yield 'Security documentation bearer auth' => [
+            'SecuredApiController',
+            'bearer-auth',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'BearerAuth' => [
+                                    'type' => 'http',
+                                    'scheme' => 'bearer',
+                                    'bearerFormat' => 'JWT',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        yield 'Security documentation OAuth2' => [
+            'SecuredApiController',
+            'oauth2',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'OAuth2' => [
+                                    'type' => 'oauth2',
+                                    'description' => 'This API uses OAuth 2 with the implicit grant flow. [More info](https://api.example.com/docs/auth)',
+                                    'flows' => [
+                                        'implicit' => [
+                                            'authorizationUrl' => 'https://api.example.com/oauth/authorize',
+                                            'scopes' => [
+                                                'read:messages' => 'Read messages',
+                                                'write:messages' => 'Write messages',
+                                            ],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        yield 'Security documentation OAuth2 multiple flows' => [
+            'SecuredApiController',
+            'oauth2-multiple-flows',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'oAuthSample' => [
+                                    'type' => 'oauth2',
+                                    'description' => 'This API uses OAuth 2 with the implicit grant flow. [More info](https://api.example.com/docs/auth)',
+                                    'flows' => [
+                                        'authorizationCode' => [
+                                            'authorizationUrl' => 'https://api.example.com/oauth/authorize',
+                                            'tokenUrl' => 'https://api.example.com/oauth/token',
+                                            'scopes' => [
+                                                'read:messages' => 'Read messages',
+                                                'write:messages' => 'Write messages',
+                                            ],
+                                        ],
+                                        'implicit' => [
+                                            'authorizationUrl' => 'https://api.example.com/oauth/authorize',
+                                            'scopes' => [
+                                                'read:messages' => 'Read messages',
+                                                'write:messages' => 'Write messages',
+                                            ],
+                                        ],
+                                        'password' => [
+                                            'tokenUrl' => 'https://api.example.com/oauth/token',
+                                            'scopes' => [
+                                                'read:messages' => 'Read messages',
+                                                'write:messages' => 'Write messages',
+                                            ],
+                                        ],
+                                        'clientCredentials' => [
+                                            'tokenUrl' => 'https://api.example.com/oauth/token',
+                                            'scopes' => [
+                                                'read:messages' => 'Read messages',
+                                                'write:messages' => 'Write messages',
+                                            ],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        yield 'Security documentation OpenId Connect' => [
+            'SecuredApiController',
+            'openid-connect',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'OpenIdConnect' => [
+                                    'type' => 'openIdConnect',
+                                    'openIdConnectUrl' => 'https://api.example.com/.well-known/openid-configuration',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        yield 'Security documentation cookie' => [
+            'SecuredApiController',
+            'cookie',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'CookieAuth' => [
+                                    'type' => 'apiKey',
+                                    'name' => 'sessionId',
+                                    'in' => 'cookie',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        yield 'Security documentation' => [
+            'InvokableController',
+            'insecured',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'BearerAuth' => [
+                                    'type' => 'http',
+                                    'scheme' => 'bearer',
+                                    'bearerFormat' => 'JWT',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        yield 'Security documentation for manually registered controller' => [
+            null,
+            'security-manually-registered',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'BearerAuth' => [
+                                    'type' => 'http',
+                                    'scheme' => 'bearer',
+                                    'bearerFormat' => 'JWT',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            [],
+            static function (RoutingConfigurator $routes) {
+                $routes->add('security-manually-registered', '/security-manually-registered')
+                    ->controller([SecuredApiController::class, 'fetchArticleAction'])
+                    ->methods(['GET']);
+            },
+        ];
+
+        yield 'Security documentation without controllers does not throw' => [
+            null,
+            'no-controllers-registered',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'BearerAuth' => [
+                                    'type' => 'http',
+                                    'scheme' => 'bearer',
+                                    'bearerFormat' => 'JWT',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        yield 'Tag from class on inherited controller' => [
+            'InvoiceDocumentController',
+        ];
+
+        yield 'Controller as service' => [
+            null,
+            'controller-as-service',
+            [],
+            [],
+            [
+                'web_custom_controller' => (new Definition(SecuredApiController::class))
+                ->setPublic(true),
+            ],
+            static function (RoutingConfigurator $routes) {
+                $routes->add('route_name', '/')
+                    ->controller('web_custom_controller::fetchArticleAction')
+                    ->methods(['GET']);
+            },
+        ];
+
+        yield 'Controller as service with security' => [
+            null,
+            'controller-as-service-with-security',
+            [],
+            [
+                'nelmio_api_doc' => [
+                    'areas' => [
+                        'default' => [
+                            'security' => [
+                                'BasicAuth' => [
+                                    'type' => 'http',
+                                    'scheme' => 'basic',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'web_custom_controller' => (new Definition(SecuredApiController::class))
+                    ->setPublic(true),
+            ],
+            static function (RoutingConfigurator $routes) {
+                $routes->add('route_name', '/')
+                    ->controller('web_custom_controller::fetchArticleAction')
+                    ->methods(['GET']);
+            },
+        ];
+
+        if (version_compare(Kernel::VERSION, '7.2.0', '>=')) {
+            yield 'Generic types' => [
+                'GenericTypesController',
+                null,
+                [],
+                [
+                    'nelmio_api_doc' => [
+                        'type_info' => true,
+                    ],
+                ],
+            ];
+        }
+
+        yield 'Custom model names' => [
+            'CustomModelNameController',
         ];
     }
 
     private static function getFixture(string $fixture): string
     {
         if (!file_exists($fixture)) {
-            self::fail(sprintf('The fixture file "%s" does not exist.', $fixture));
+            self::fail(\sprintf('The fixture file "%s" does not exist.', $fixture));
         }
 
         $content = file_get_contents($fixture);
 
         if (false === $content) {
-            self::fail(sprintf('Failed to read the fixture file "%s".', $fixture));
+            self::fail(\sprintf('Failed to read the fixture file "%s".', $fixture));
         }
 
         return $content;

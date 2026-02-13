@@ -11,40 +11,72 @@
 
 namespace Nelmio\ApiDocBundle\Model;
 
-use Symfony\Component\PropertyInfo\Type;
+use Nelmio\ApiDocBundle\Util\LegacyTypeConverter;
+use Symfony\Component\PropertyInfo\Type as LegacyType;
+use Symfony\Component\TypeInfo\Type;
 
 final class Model
 {
-    private Type $type;
-
     /**
-     * @var mixed[]|null
+     * @param string[]|null         $groups
+     * @param mixed[]               $options
+     * @param mixed[]               $serializationContext
+     * @param non-empty-string|null $name                 An optional custom name for the generated schema
      */
-    private ?array $options;
+    public function __construct(
+        private LegacyType|Type $type,
+        ?array $groups = null,
+        private array $options = [],
+        private array $serializationContext = [],
+        public readonly ?string $name = null,
+    ) {
+        if ($type instanceof LegacyType) {
+            trigger_deprecation(
+                'nelmio/api-doc-bundle',
+                '5.8.0',
+                'Using Symfony\Component\PropertyInfo\Type as type in %s is deprecated, use Symfony\Component\TypeInfo\Type instead.',
+                __METHOD__
+            );
+        }
 
-    /**
-     * @var mixed[]
-     */
-    private array $serializationContext;
-
-    /**
-     * @param string[]|null $groups
-     * @param mixed[]|null  $options
-     * @param mixed[]       $serializationContext
-     */
-    public function __construct(Type $type, ?array $groups = null, ?array $options = null, array $serializationContext = [])
-    {
-        $this->type = $type;
-        $this->options = $options;
-        $this->serializationContext = $serializationContext;
         if (null !== $groups) {
             $this->serializationContext['groups'] = $groups;
         }
     }
 
-    public function getType(): Type
+    /**
+     * @deprecated use {@see getTypeInfo()} instead
+     */
+    public function getType(): LegacyType
     {
+        trigger_deprecation(
+            'nelmio/api-doc-bundle',
+            '5.8.0',
+            'The %s method is deprecated, use %s::getTypeInfo() instead.',
+            __METHOD__,
+            self::class,
+        );
+
+        if ($this->type instanceof Type) {
+            return LegacyTypeConverter::toLegacyType($this->type);
+        }
+
         return $this->type;
+    }
+
+    public function getTypeInfo(): Type
+    {
+        if ($this->type instanceof Type) {
+            return $this->type;
+        }
+
+        $converted = LegacyTypeConverter::toTypeInfoType([$this->type]);
+
+        if (null === $converted) {
+            throw new \LogicException('Could not convert legacy type to TypeInfo type.');
+        }
+
+        return $converted;
     }
 
     /**
@@ -65,13 +97,15 @@ final class Model
 
     public function getHash(): string
     {
-        return md5(serialize([$this->type, $this->getSerializationContext()]));
+        $type = $this->getTypeInfo()->__toString();
+
+        return md5(serialize([$type, $this->getSerializationContext(), $this->name]));
     }
 
     /**
-     * @return mixed[]|null
+     * @return mixed[]
      */
-    public function getOptions(): ?array
+    public function getOptions(): array
     {
         return $this->options;
     }

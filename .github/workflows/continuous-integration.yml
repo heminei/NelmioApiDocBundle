@@ -7,11 +7,11 @@ on:
   pull_request:
     branches:
       - "*.x"
-      - master
   push:
     branches:
       - "*.x"
-      - master
+  schedule:
+    - cron: "21 4 * * 5" # “At 04:21 on Friday.”
 
 env:
   fail-fast: true
@@ -24,42 +24,72 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        test-group:
+          - core
+          - fos-rest
+          - jms-serializer
+          - hateoas
+        php-version:
+          - 8.2
+          - 8.3
+          - 8.4
+          - 8.5
+        symfony-require:
+          - "6.4"
+          - "7.2"
+          - "7.3"
+          - "7.4"
+          - "8.0"
+        composer-flags:
+          - ""
         include:
-          - php-version: 7.4
+          - test-group: core
+            php-version: 8.2
+            symfony-require: "6.4"
             composer-flags: "--prefer-lowest"
-            doctrine-annotations: true
-          - php-version: 7.4
-            symfony-require: "5.4.*"
-            doctrine-annotations: true
-          - php-version: 8.0
-            symfony-require: "5.4.*"
-            doctrine-annotations: true
-          - php-version: 8.1
-            symfony-require: "5.4.*"
-            doctrine-annotations: true
-          - php-version: 8.3
-            symfony-require: "5.4.*"
-            doctrine-annotations: true
-          - php-version: 8.1
-            symfony-require: "6.3.*"
-            doctrine-annotations: true
-          - php-version: 8.3
-            symfony-require: "6.3.*"
-            doctrine-annotations: true
+        exclude:
+          # Symfony 8.x: Requires: PHP 8.4 or higher
           - php-version: 8.2
-            symfony-require: "7.0.*"
-            doctrine-annotations: false
+            symfony-require: 8.0
           - php-version: 8.3
-            symfony-require: "7.0.*"
-            doctrine-annotations: false
+            symfony-require: 8.0
+          # https://github.com/FriendsOfSymfony/FOSRestBundle/pull/2429 Does not support Symfony 8.x yet
+          - test-group: fos-rest
+            symfony-require: "8.0"
+          # Test only the lowest and highest PHP versions for each optional dependency test group
+          - test-group: fos-rest
+            php-version: 8.3
+          - test-group: fos-rest
+            php-version: 8.4
+          - test-group: jms-serializer
+            php-version: 8.3
+          - test-group: jms-serializer
+            php-version: 8.4
+          - test-group: hateoas
+            php-version: 8.3
+          - test-group: hateoas
+            php-version: 8.4
+          # Test only the highest versions for a symfony major for each optional dependency test group
+          - test-group: fos-rest
+            symfony-require: "7.2"
+          - test-group: fos-rest
+            symfony-require: "7.3"
+          - test-group: jms-serializer
+            symfony-require: "7.2"
+          - test-group: jms-serializer
+            symfony-require: "7.3"
+          - test-group: hateoas
+            symfony-require: "7.2"
+          - test-group: hateoas
+            symfony-require: "7.3"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 2
 
-      - name: Install PHP without coverage
+      - name: Install PHP with coverage
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-version }}
@@ -70,11 +100,61 @@ jobs:
         uses: ./.github/workflows/common/composer-install
         with:
           symfony-version: ${{ matrix.symfony-require }}
-          install-doctrine-annotations: ${{ matrix.doctrine-annotations }}
           composer-flags: ${{ matrix.composer-flags }}
+          test-group: ${{ matrix.test-group }}
 
       - name: PHPUnit Tests
-        run: vendor/bin/phpunit --configuration phpunit.xml.dist --coverage-text
+        run: |
+          if [ "${{ matrix.test-group }}" == "core" ]; then
+            PHPUNIT_ARGS="--exclude-group fos-rest,jms-serializer,hateoas"
+          else
+            PHPUNIT_ARGS="--group ${{ matrix.test-group }}"
+          fi
+
+          vendor/bin/phpunit \
+          --configuration phpunit.xml.dist \
+          --log-junit=junit-${{ matrix.php-version }}-${{ matrix.symfony-require }}-${{ matrix.test-group }}.xml \
+          --coverage-clover=coverage-${{ matrix.php-version }}-${{ matrix.symfony-require }}-${{ matrix.test-group }}.xml \
+          --coverage-filter=src/ \
+          $PHPUNIT_ARGS
+      - uses: actions/upload-artifact@v6
+        with:
+          name: phpunit-${{ matrix.php-version }}-${{ matrix.symfony-require }}-${{ matrix.test-group }}${{ matrix.composer-flags }}
+          path: |
+            coverage*.xml
+            junit*.xml
+          if-no-files-found: error
+          retention-days: 2
+
+  codecov:
+    name: Codecov
+    runs-on: ubuntu-22.04
+
+    needs: phpunit
+    timeout-minutes: 5
+
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+
+      - name: Upload test results to Codecov.io
+        uses: codecov/test-results-action@v1
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload code coverage to Codecov.io
+        uses: codecov/codecov-action@v5
+        with:
+          fail_ci_if_error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   php-cs-fixer:
     name: PHP-CS-Fixer
@@ -82,7 +162,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 2
 
@@ -91,13 +171,13 @@ jobs:
         with:
           php-version: 8.3
           tools: composer, flex
-          coverage: pcov
+          coverage: none
 
       - name: Setup dependencies
         uses: ./.github/workflows/common/composer-install
         with:
-          symfony-version: "7.0.*"
-          install-doctrine-annotations: false
+          symfony-version: "7.2.*"
+          test-group: all
 
       - name: Run PHP-CS-Fixer
         run: vendor/bin/php-cs-fixer check -v --diff
@@ -108,7 +188,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 2
 
@@ -117,13 +197,13 @@ jobs:
         with:
           php-version: 8.3
           tools: composer, flex
-          coverage: pcov
+          coverage: none
 
       - name: Setup dependencies
         uses: ./.github/workflows/common/composer-install
         with:
-          symfony-version: "7.0.*"
-          install-doctrine-annotations: false
+          symfony-version: "7.2.*"
+          test-group: all
 
       - name: Run PHPStan
-        run: vendor/bin/phpstan analyse --memory-limit=2G --no-progress --no-interaction
+        run: vendor/bin/phpstan analyse --no-progress --no-interaction

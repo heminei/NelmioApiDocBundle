@@ -16,8 +16,10 @@ use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Component\Config\Loader\LoaderInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\HttpKernel\Bundle\Bundle;
 use Symfony\Component\HttpKernel\Kernel;
+use Symfony\Component\PropertyInfo\Type as LegacyType;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 
 final class NelmioKernel extends Kernel
@@ -25,31 +27,17 @@ final class NelmioKernel extends Kernel
     use MicroKernelTrait;
 
     /**
-     * @var Bundle[]
+     * @param Bundle[]                    $extraBundles
+     * @param array<string, array<mixed>> $extraConfigs     Key is the extension name, value is the config
+     * @param array<string, Definition>   $extraDefinitions
      */
-    private array $extraBundles;
-
-    /**
-     * @var callable|null
-     */
-    private $routeConfiguration;
-
-    /**
-     * @var string[]
-     */
-    private array $extraConfigs;
-
-    /**
-     * @param Bundle[] $extraBundles
-     * @param string[] $extraConfigs
-     */
-    public function __construct(array $extraBundles, ?callable $routeConfiguration, array $extraConfigs)
-    {
+    public function __construct(
+        private array $extraBundles,
+        private ?\Closure $routeConfiguration,
+        private array $extraConfigs,
+        private array $extraDefinitions,
+    ) {
         parent::__construct('test', true);
-
-        $this->extraBundles = $extraBundles;
-        $this->routeConfiguration = $routeConfiguration;
-        $this->extraConfigs = $extraConfigs;
     }
 
     public function registerBundles(): iterable
@@ -73,8 +61,16 @@ final class NelmioKernel extends Kernel
     {
         $container->loadFromExtension('framework', ['test' => null]);
 
-        foreach ($this->extraConfigs as $extraConfig) {
-            $loader->load($extraConfig);
+        if (!class_exists(LegacyType::class)) {
+            $container->loadFromExtension('nelmio_api_doc', ['type_info' => true]);
+        }
+
+        foreach ($this->extraConfigs as $extensionName => $config) {
+            $container->loadFromExtension($extensionName, $config);
+        }
+
+        foreach ($this->extraDefinitions as $id => $definition) {
+            $container->setDefinition($id, $definition);
         }
     }
 }

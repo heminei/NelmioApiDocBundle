@@ -21,16 +21,14 @@ use Symfony\Component\Validator\Constraints as Assert;
 /**
  * @author Guilhem N. <egetick@gmail.com>
  */
-#[
-    ApiResource(
-        operations: [
-            new Get(name: 'get'),
-            new Get(name: 'custom2', uriTemplate: '/foo'),
-            new Post(name: 'custom', uriTemplate: '/foo'),
-            new GetCollection(),
-        ],
-    )
-]
+#[ApiResource(
+    operations: [
+        new Get(name: 'get'),
+        new Get(name: 'custom2', uriTemplate: '/foo'),
+        new Post(name: 'custom', uriTemplate: '/foo'),
+        new GetCollection(),
+    ],
+)]
 class Dummy
 {
     /**
@@ -40,9 +38,8 @@ class Dummy
 
     /**
      * @var string
-     *
-     * @Assert\NotBlank
      */
+    #[Assert\NotBlank]
     #[ApiProperty(iris: ['http://schema.org/name'])]
     private $name;
 
@@ -51,7 +48,7 @@ class Dummy
         return $this->id;
     }
 
-    public function setName(string $name)
+    public function setName(string $name): void
     {
         $this->name = $name;
     }

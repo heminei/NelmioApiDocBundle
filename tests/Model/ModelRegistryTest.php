@@ -15,9 +15,11 @@ use Nelmio\ApiDocBundle\Model\Model;
 use Nelmio\ApiDocBundle\Model\ModelRegistry;
 use OpenApi\Annotations as OA;
 use OpenApi\Context;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
-use Symfony\Component\PropertyInfo\Type;
+use Symfony\Component\PropertyInfo\Type as LegacyType;
+use Symfony\Component\TypeInfo\Type;
 
 class ModelRegistryTest extends TestCase
 {
@@ -30,83 +32,75 @@ class ModelRegistryTest extends TestCase
             ],
         ];
         $registry = new ModelRegistry([], $this->createOpenApi(), $alternativeNames);
-        $type = new Type(Type::BUILTIN_TYPE_ARRAY, false, null, true);
+        $type = class_exists(LegacyType::class)
+            ? new LegacyType(LegacyType::BUILTIN_TYPE_ARRAY, false, null, true)
+            : Type::list();
 
-        self::assertEquals('#/components/schemas/array', $registry->register(new Model($type, ['group1'])));
+        self::assertEquals(
+            '#/components/schemas/mixed[]',
+            $registry->register(new Model($type, ['group1']))
+        );
     }
 
-    /**
-     * @dataProvider provideNameCollisionsTypes
-     *
-     * @param array<string, mixed> $arrayType
-     */
-    public function testNameCollisionsAreLogged(Type $type, array $arrayType): void
+    #[DataProvider('provideNameCollisionsTypes')]
+    public function testNameCollisionsAreLogged(LegacyType|Type $type, string $stringifiedType): void
     {
         $logger = $this->createMock(LoggerInterface::class);
         $logger
             ->expects(self::once())
             ->method('info')
             ->with(
-                'Can not assign a name for the model, the name "ModelRegistryTest" has already been taken.', [
+                'Can not assign a name for the model, the name "ModelRegistryTest" has already been taken.',
+                [
                     'model' => [
-                        'type' => $arrayType,
-                        'options' => null,
+                        'type' => $stringifiedType,
+                        'options' => [],
                         'groups' => ['group2'],
                         'serialization_context' => [
                             'groups' => ['group2'],
                         ],
                     ],
                     'taken_by' => [
-                        'type' => $arrayType,
-                        'options' => null,
+                        'type' => $stringifiedType,
+                        'options' => [],
                         'groups' => ['group1'],
                         'serialization_context' => [
                             'groups' => ['group1'],
                             'extra_context' => true,
                         ],
                     ],
-                ]);
+                ]
+            );
 
         $registry = new ModelRegistry([], $this->createOpenApi(), []);
         $registry->setLogger($logger);
 
-        $registry->register(new Model($type, ['group1'], null, ['extra_context' => true]));
+        $registry->register(new Model($type, ['group1'], [], ['extra_context' => true]));
         $registry->register(new Model($type, ['group2']));
     }
 
     public static function provideNameCollisionsTypes(): \Generator
     {
-        yield [
-            new Type(Type::BUILTIN_TYPE_OBJECT, false, self::class),
-            [
-                'class' => 'Nelmio\\ApiDocBundle\\Tests\\Model\\ModelRegistryTest',
-                'built_in_type' => 'object',
-                'nullable' => false,
-                'collection' => false,
-                'collection_key_types' => null,
-                'collection_value_types' => null,
-            ],
+        if (class_exists(LegacyType::class)) {
+            yield 'class (LegacyType)' => [
+                new LegacyType(LegacyType::BUILTIN_TYPE_OBJECT, false, self::class),
+                'Nelmio\\ApiDocBundle\\Tests\\Model\\ModelRegistryTest',
+            ];
+
+            yield 'nullable class (LegacyType)' => [
+                new LegacyType(LegacyType::BUILTIN_TYPE_OBJECT, true, self::class),
+                'Nelmio\\ApiDocBundle\\Tests\\Model\\ModelRegistryTest|null',
+            ];
+        }
+
+        yield 'class' => [
+            Type::object(self::class),
+            'Nelmio\\ApiDocBundle\\Tests\\Model\\ModelRegistryTest',
         ];
 
-        yield [
-            new Type(Type::BUILTIN_TYPE_OBJECT, false, self::class, true, new Type(Type::BUILTIN_TYPE_OBJECT)),
-            [
-                'class' => 'Nelmio\\ApiDocBundle\\Tests\\Model\\ModelRegistryTest',
-                'built_in_type' => 'object',
-                'nullable' => false,
-                'collection' => true,
-                'collection_key_types' => [
-                    [
-                        'class' => null,
-                        'built_in_type' => 'object',
-                        'nullable' => false,
-                        'collection' => false,
-                        'collection_key_types' => null,
-                        'collection_value_types' => null,
-                    ],
-                ],
-                'collection_value_types' => [],
-            ],
+        yield 'nullable class' => [
+            Type::nullable(Type::object(self::class)),
+            'Nelmio\\ApiDocBundle\\Tests\\Model\\ModelRegistryTest|null',
         ];
     }
 
@@ -124,60 +118,65 @@ class ModelRegistryTest extends TestCase
             ->expects(self::once())
             ->method('info')
             ->with(
-                'Can not assign a name for the model, the name "ModelRegistryTest" has already been taken.', [
+                'Can not assign a name for the model, the name "ModelRegistryTest" has already been taken.',
+                [
                     'model' => [
-                        'type' => [
-                            'class' => 'Nelmio\\ApiDocBundle\\Tests\\Model\\ModelRegistryTest',
-                            'built_in_type' => 'object',
-                            'nullable' => false,
-                            'collection' => false,
-                            'collection_key_types' => null,
-                            'collection_value_types' => null,
-                        ],
-                        'options' => null,
+                        'type' => 'Nelmio\\ApiDocBundle\\Tests\\Model\\ModelRegistryTest',
+                        'options' => [],
                         'groups' => ['group2'],
                         'serialization_context' => ['groups' => ['group2']],
                     ],
                     'taken_by' => [
-                        'type' => [
-                            'class' => 'Nelmio\\ApiDocBundle\\Tests\\Model\\ModelRegistryTest',
-                            'built_in_type' => 'object',
-                            'nullable' => false,
-                            'collection' => false,
-                            'collection_key_types' => null,
-                            'collection_value_types' => null,
-                        ],
-                        'options' => null,
+                        'type' => 'Nelmio\\ApiDocBundle\\Tests\\Model\\ModelRegistryTest',
+                        'options' => [],
                         'groups' => ['group1'],
                         'serialization_context' => ['groups' => ['group1']],
                     ],
-                ]);
+                ]
+            );
 
         $registry = new ModelRegistry([], $this->createOpenApi(), $alternativeNames);
         $registry->setLogger($logger);
 
-        $type = new Type(Type::BUILTIN_TYPE_OBJECT, false, self::class);
+        $type = class_exists(LegacyType::class)
+            ? new LegacyType(LegacyType::BUILTIN_TYPE_OBJECT, false, self::class)
+            : Type::object(self::class);
         $registry->register(new Model($type, ['group2']));
     }
 
     /**
-     * @dataProvider getNameAlternatives
-     *
      * @param string[]|null        $groups
      * @param array<string, mixed> $alternativeNames
      */
-    public function testNameAliasingForObjects(string $expected, ?array $groups, array $alternativeNames): void
+    #[DataProvider('getNameAlternatives')]
+    public function testNameAliasingForObjectsLegacyType(string $expected, ?array $groups, ?string $name, array $alternativeNames): void
     {
         $registry = new ModelRegistry([], $this->createOpenApi(), $alternativeNames);
-        $type = new Type(Type::BUILTIN_TYPE_OBJECT, false, self::class);
+        $type = class_exists(LegacyType::class)
+            ? new LegacyType(LegacyType::BUILTIN_TYPE_OBJECT, false, self::class)
+            : Type::object(self::class);
 
-        self::assertEquals($expected, $registry->register(new Model($type, $groups)));
+        self::assertEquals($expected, $registry->register(new Model($type, $groups, name: $name)));
+    }
+
+    /**
+     * @param string[]|null        $groups
+     * @param array<string, mixed> $alternativeNames
+     */
+    #[DataProvider('getNameAlternatives')]
+    public function testNameAliasingForObjects(string $expected, ?array $groups, ?string $name, array $alternativeNames): void
+    {
+        $registry = new ModelRegistry([], $this->createOpenApi(), $alternativeNames);
+        $type = Type::object(self::class);
+
+        self::assertEquals($expected, $registry->register(new Model($type, $groups, name: $name)));
     }
 
     public static function getNameAlternatives(): \Generator
     {
         yield [
             '#/components/schemas/ModelRegistryTest',
+            null,
             null,
             [
                 'Foo1' => [
@@ -190,6 +189,31 @@ class ModelRegistryTest extends TestCase
         yield [
             '#/components/schemas/Foo1',
             ['group1'],
+            null,
+            [
+                'Foo1' => [
+                    'type' => self::class,
+                    'groups' => ['group1'],
+                ],
+            ],
+        ];
+
+        yield [
+            '#/components/schemas/FooManualNaming',
+            null,
+            'FooManualNaming',
+            [
+                'Foo1' => [
+                    'type' => self::class,
+                    'groups' => ['group1'],
+                ],
+            ],
+        ];
+
+        yield [
+            '#/components/schemas/FooManualNaming',
+            ['group1'],
+            'FooManualNaming',
             [
                 'Foo1' => [
                     'type' => self::class,
@@ -201,6 +225,7 @@ class ModelRegistryTest extends TestCase
         yield [
             '#/components/schemas/Foo1',
             ['group1', 'group2'],
+            null,
             [
                 'Foo1' => [
                     'type' => self::class,
@@ -211,6 +236,7 @@ class ModelRegistryTest extends TestCase
 
         yield [
             '#/components/schemas/ModelRegistryTest',
+            null,
             null,
             [
                 'Foo1' => [
@@ -223,6 +249,7 @@ class ModelRegistryTest extends TestCase
         yield [
             '#/components/schemas/Foo1',
             [],
+            null,
             [
                 'Foo1' => [
                     'type' => self::class,
@@ -230,15 +257,61 @@ class ModelRegistryTest extends TestCase
                 ],
             ],
         ];
+
+        yield 'ensure first defined alternative name is used' => [
+            '#/components/schemas/Foo1',
+            ['group1'],
+            null,
+            [
+                'Foo1' => [
+                    'type' => self::class,
+                    'groups' => ['group1'],
+                ],
+                'Foo2' => [
+                    'type' => self::class,
+                    'groups' => ['group1'],
+                ],
+            ],
+        ];
     }
 
-    /**
-     * @dataProvider unsupportedTypesProvider
-     */
-    public function testUnsupportedTypeException(Type $type, string $stringType): void
+    public function testMultipleSchemasSameCustomName(): void
     {
-        $this->expectException('\LogicException');
-        $this->expectExceptionMessage(sprintf('Schema of type "%s" can\'t be generated, no describer supports it.', $stringType));
+        $registry = new ModelRegistry([], $this->createOpenApi());
+        $name = 'CustomName';
+
+        if (class_exists(LegacyType::class)) {
+            self::assertEquals('#/components/schemas/CustomName', $registry->register(new Model(new LegacyType(LegacyType::BUILTIN_TYPE_OBJECT, false, self::class), name: $name)));
+            self::assertEquals('#/components/schemas/CustomName2', $registry->register(new Model(new LegacyType(LegacyType::BUILTIN_TYPE_OBJECT, false, self::class.'Foo'), name: $name)));
+            self::assertEquals('#/components/schemas/CustomName3', $registry->register(new Model(new LegacyType(LegacyType::BUILTIN_TYPE_OBJECT, false, self::class.'Bar'), name: $name)));
+        } else {
+            self::assertEquals('#/components/schemas/CustomName', $registry->register(new Model(Type::object(self::class), name: $name)));
+            self::assertEquals('#/components/schemas/CustomName2', $registry->register(new Model(Type::object(self::class.'Foo'), name: $name)));
+            self::assertEquals('#/components/schemas/CustomName3', $registry->register(new Model(Type::object(self::class.'Bar'), name: $name)));
+        }
+    }
+
+    // Re-using the same custom name with an identical model should return the same schema reference
+    public function testMultipleSchemasSameCustomNameReusesReference(): void
+    {
+        $registry = new ModelRegistry([], $this->createOpenApi());
+        $name = 'CustomName';
+
+        $type = class_exists(LegacyType::class)
+            ? new LegacyType(LegacyType::BUILTIN_TYPE_OBJECT, false, self::class.'ReUsed')
+            : Type::object(self::class.'ReUsed');
+
+        self::assertEquals('#/components/schemas/CustomName', $registry->register(new Model($type, name: $name)));
+        self::assertEquals('#/components/schemas/CustomName', $registry->register(new Model($type, name: $name)));
+        self::assertEquals('#/components/schemas/CustomName', $registry->register(new Model($type, name: $name)));
+        self::assertEquals('#/components/schemas/ModelRegistryTestReUsed', $registry->register(new Model($type)));
+    }
+
+    #[DataProvider('unsupportedTypesProvider')]
+    public function testUnsupportedTypeException(LegacyType|Type $type, string $stringType): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage(\sprintf('Schema of type "%s" can\'t be generated, no describer supports it.', $stringType));
 
         $registry = new ModelRegistry([], $this->createOpenApi());
         $registry->register(new Model($type));
@@ -247,17 +320,24 @@ class ModelRegistryTest extends TestCase
 
     public static function unsupportedTypesProvider(): \Generator
     {
-        yield [new Type(Type::BUILTIN_TYPE_ARRAY, false, null, true), 'mixed[]'];
-        yield [new Type(Type::BUILTIN_TYPE_OBJECT, false, self::class), '\\'.self::class];
+        if (class_exists(LegacyType::class)) {
+            yield [new LegacyType(LegacyType::BUILTIN_TYPE_ARRAY, false, null, true), 'array'];
+            yield [new LegacyType(LegacyType::BUILTIN_TYPE_OBJECT, false, self::class), self::class];
+        }
+
+        yield [Type::array(), 'array'];
+        yield [Type::object(self::class), self::class];
     }
 
     public function testUnsupportedTypeExceptionWithNonExistentClass(): void
     {
         $className = 'Some\\Class\\That\\DoesNotExist';
-        $type = new Type(Type::BUILTIN_TYPE_OBJECT, false, $className);
+        $type = class_exists(LegacyType::class)
+            ? new LegacyType(LegacyType::BUILTIN_TYPE_OBJECT, false, $className)
+            : Type::object($className);
 
         $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage(sprintf('Schema of type "\%s" can\'t be generated, no describer supports it. Class "\Some\Class\That\DoesNotExist" does not exist, did you forget a use statement, or typed it wrong?', $className));
+        $this->expectExceptionMessage(\sprintf('Schema of type "%s" can\'t be generated, no describer supports it. Class "Some\Class\That\DoesNotExist" does not exist, did you forget a use statement, or typed it wrong?', $className));
 
         $registry = new ModelRegistry([], $this->createOpenApi());
         $registry->register(new Model($type));

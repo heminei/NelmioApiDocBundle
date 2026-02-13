@@ -1,0 +1,33 @@
+{
+    "required": [
+        "untypedArray",
+        "arrayOfIntegers",
+        "listOfIntegers"
+    ],
+    "properties": {
+        "untypedArray": {
+            "type": "array",
+            "items": {}
+        },
+        "arrayOfIntegers": {
+            "type": "array",
+            "items": {
+                "type": "integer"
+            }
+        },
+        "listOfIntegers": {
+            "type": "array",
+            "items": {
+                "type": "integer"
+            }
+        },
+        "listOfIntegersNullable": {
+            "type": "array",
+            "items": {
+                "type": "integer"
+            },
+            "nullable": true
+        }
+    },
+    "type": "object"
+}

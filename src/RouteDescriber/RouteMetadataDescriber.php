@@ -88,14 +88,14 @@ final class RouteMetadataDescriber implements RouteDescriberInterface
 
         $operationParameters = Generator::UNDEFINED !== $operation->parameters ? $operation->parameters : [];
         /** @var OA\Parameter $parameter */
-        foreach ($operationParameters as $id => $parameter) {
+        foreach ($operationParameters as $parameter) {
             $ref = $parameter->ref;
             if (Generator::UNDEFINED === $ref) {
                 // we only concern ourselves with '$ref' parameters, so continue the loop
                 continue;
             }
 
-            $ref = \mb_substr($ref, 24); // trim the '#/components/parameters/' part of ref
+            $ref = mb_substr($ref, 24); // trim the '#/components/parameters/' part of ref
             if (!isset($globalParams[$ref])) {
                 // this shouldn't happen during proper configs, but in case of bad config, just ignore it here
                 continue;
@@ -121,15 +121,14 @@ final class RouteMetadataDescriber implements RouteDescriberInterface
     private function getPossibleEnumValues(string $reqPattern): array
     {
         $requirements = [];
-        if (false !== strpos($reqPattern, '|')) {
+        if (str_contains($reqPattern, '|')) {
             $parts = explode('|', $reqPattern);
             foreach ($parts as $part) {
                 if ('' === $part || 0 === preg_match(self::ALPHANUM_EXPANDED_REGEX, $part)) {
                     // we check a complex regex expression containing | - abort in that case
                     return [];
-                } else {
-                    $requirements[] = $part;
                 }
+                $requirements[] = $part;
             }
         }
 

@@ -13,15 +13,14 @@ namespace Nelmio\ApiDocBundle\Command;
 
 use Nelmio\ApiDocBundle\Render\Html\AssetsMode;
 use Nelmio\ApiDocBundle\Render\RenderOpenApi;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 
-/**
- * @final
- */
-class DumpCommand extends Command
+#[AsCommand(name: 'nelmio:apidoc:dump')]
+final class DumpCommand extends Command
 {
     private RenderOpenApi $renderOpenApi;
 
@@ -32,6 +31,7 @@ class DumpCommand extends Command
         'assets_mode' => AssetsMode::CDN,
         'swagger_ui_config' => [],
         'redocly_config' => [],
+        'stoplight_config' => [],
     ];
 
     public function __construct(RenderOpenApi $renderOpenApi)
@@ -49,6 +49,18 @@ class DumpCommand extends Command
         $availableFormats = $this->renderOpenApi->getAvailableFormats();
         $this
             ->setDescription('Dumps documentation in OpenAPI format to: '.implode(', ', $availableFormats))
+            ->setHelp(
+                <<<'EOF'
+                    The <info>%command.name%</info> command dumps the OpenAPI documentation in the specified format to the standard output.
+                    You can specify the "area" option to select a specific documentation area (if multiple areas are defined).
+
+                      <info>php %command.full_name%</info>  
+                      <info>php %command.full_name% --area MyAreaName</info>
+
+                    <href=https://symfony.com/bundles/NelmioApiDocBundle/current/commands.html>Read the documentation here.</href>
+
+                    EOF
+            )
             ->addOption('area', '', InputOption::VALUE_OPTIONAL, '', 'default')
             ->addOption(
                 'format',
@@ -71,7 +83,7 @@ class DumpCommand extends Command
         $options = [];
         if (RenderOpenApi::HTML === $format) {
             $rawHtmlConfig = json_decode($input->getOption('html-config'), true);
-            $options = is_array($rawHtmlConfig) ? $rawHtmlConfig + $this->defaultHtmlConfig : $this->defaultHtmlConfig;
+            $options = \is_array($rawHtmlConfig) ? $rawHtmlConfig + $this->defaultHtmlConfig : $this->defaultHtmlConfig;
         } elseif (RenderOpenApi::JSON === $format) {
             $options = [
                 'no-pretty' => $input->hasParameterOption(['--no-pretty']),

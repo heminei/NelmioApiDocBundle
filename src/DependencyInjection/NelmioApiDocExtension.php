@@ -17,10 +17,13 @@ use JMS\Serializer\Visitor\SerializationVisitorInterface;
 use Nelmio\ApiDocBundle\ApiDocGenerator;
 use Nelmio\ApiDocBundle\Describer\ExternalDocDescriber;
 use Nelmio\ApiDocBundle\Describer\OpenApiPhpDescriber;
+use Nelmio\ApiDocBundle\Describer\OperationIdGeneration;
 use Nelmio\ApiDocBundle\Describer\RouteDescriber;
+use Nelmio\ApiDocBundle\Describer\SecurityDescriber;
 use Nelmio\ApiDocBundle\ModelDescriber\BazingaHateoasModelDescriber;
 use Nelmio\ApiDocBundle\ModelDescriber\JMSModelDescriber;
 use Nelmio\ApiDocBundle\ModelDescriber\ModelDescriberInterface;
+use Nelmio\ApiDocBundle\OpenApiGenerator;
 use Nelmio\ApiDocBundle\Processor\MapQueryStringProcessor;
 use Nelmio\ApiDocBundle\Processor\MapRequestPayloadProcessor;
 use Nelmio\ApiDocBundle\RouteDescriber\RouteArgumentDescriber;
@@ -28,21 +31,19 @@ use Nelmio\ApiDocBundle\RouteDescriber\RouteArgumentDescriber\RouteArgumentDescr
 use Nelmio\ApiDocBundle\RouteDescriber\RouteArgumentDescriber\SymfonyMapQueryParameterDescriber;
 use Nelmio\ApiDocBundle\RouteDescriber\RouteArgumentDescriber\SymfonyMapQueryStringDescriber;
 use Nelmio\ApiDocBundle\RouteDescriber\RouteArgumentDescriber\SymfonyMapRequestPayloadDescriber;
+use Nelmio\ApiDocBundle\RouteDescriber\RouteArgumentDescriber\SymfonyMapUploadedFileDescriber;
 use Nelmio\ApiDocBundle\Routing\FilteredRouteCollectionBuilder;
-use OpenApi\Generator;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\Argument\TaggedIteratorArgument;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
-use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
+use Symfony\Component\DependencyInjection\Extension\Extension;
 use Symfony\Component\DependencyInjection\Extension\PrependExtensionInterface;
-use Symfony\Component\DependencyInjection\Loader\XmlFileLoader;
+use Symfony\Component\DependencyInjection\Loader\PhpFileLoader;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\HttpKernel\Attribute\MapQueryParameter;
-use Symfony\Component\HttpKernel\Attribute\MapQueryString;
-use Symfony\Component\HttpKernel\Attribute\MapRequestPayload;
-use Symfony\Component\HttpKernel\DependencyInjection\Extension;
+use Symfony\Component\HttpKernel\Attribute\MapUploadedFile;
 use Symfony\Component\Routing\RouteCollection;
 
 final class NelmioApiDocExtension extends Extension implements PrependExtensionInterface
@@ -62,9 +63,9 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
     public function load(array $configs, ContainerBuilder $container): void
     {
         $config = $this->processConfiguration(new Configuration(), $configs);
-        $loader = new XmlFileLoader($container, new FileLocator(__DIR__.'/../../config'));
+        $loader = new PhpFileLoader($container, new FileLocator(__DIR__.'/../../config'));
 
-        $loader->load('services.xml');
+        $loader->load('services.php');
 
         // Filter routes
         $routesDefinition = (new Definition(RouteCollection::class))
@@ -75,7 +76,7 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
         $container->setParameter('nelmio_api_doc.use_validation_groups', $config['use_validation_groups']);
 
         // Register the OpenAPI Generator as a service.
-        $container->register('nelmio_api_doc.open_api.generator', Generator::class)
+        $container->register('nelmio_api_doc.open_api.generator', OpenApiGenerator::class)
             ->setPublic(false);
 
         $cachePool = $config['cache']['pool'] ?? null;
@@ -83,10 +84,10 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
 
         foreach ($config['areas'] as $area => $areaConfig) {
             $areaCachePool = $areaConfig['cache']['pool'] ?? $cachePool;
-            $areaCacheItemId = $areaConfig['cache']['item_id'] ?? sprintf('%s.%s', $cacheItemId, $area);
+            $areaCacheItemId = $areaConfig['cache']['item_id'] ?? \sprintf('%s.%s', $cacheItemId, $area);
 
             $nameAliases = $this->findNameAliases($config['models']['names'], $area);
-            $container->register(sprintf('nelmio_api_doc.generator.%s', $area), ApiDocGenerator::class)
+            $container->register(\sprintf('nelmio_api_doc.generator.%s', $area), ApiDocGenerator::class)
                 ->setPublic(true)
                 ->addMethodCall('setAlternativeNames', [$nameAliases])
                 ->addMethodCall('setMediaTypes', [$config['media_types']])
@@ -94,57 +95,68 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
                 ->addMethodCall('setOpenApiVersion', [$config['documentation']['openapi'] ?? null])
                 ->addTag('monolog.logger', ['channel' => 'nelmio_api_doc'])
                 ->setArguments([
-                    new TaggedIteratorArgument(sprintf('nelmio_api_doc.describer.%s', $area)),
+                    new TaggedIteratorArgument(\sprintf('nelmio_api_doc.describer.%s', $area)),
                     new TaggedIteratorArgument('nelmio_api_doc.model_describer'),
                     null !== $areaCachePool ? new Reference($areaCachePool) : null,
                     $areaCacheItemId,
                     new Reference('nelmio_api_doc.open_api.generator'),
                 ]);
 
-            $container->register(sprintf('nelmio_api_doc.describers.route.%s', $area), RouteDescriber::class)
+            $container->register(\sprintf('nelmio_api_doc.describers.route.%s', $area), RouteDescriber::class)
                 ->setPublic(false)
                 ->setArguments([
-                    new Reference(sprintf('nelmio_api_doc.routes.%s', $area)),
+                    new Reference(\sprintf('nelmio_api_doc.routes.%s', $area)),
                     new Reference('nelmio_api_doc.controller_reflector'),
                     new TaggedIteratorArgument('nelmio_api_doc.route_describer'),
                 ])
-                ->addTag(sprintf('nelmio_api_doc.describer.%s', $area), ['priority' => -400]);
+                ->addTag(\sprintf('nelmio_api_doc.describer.%s', $area), ['priority' => -400]);
 
-            $container->register(sprintf('nelmio_api_doc.describers.openapi_php.%s', $area), OpenApiPhpDescriber::class)
+            $container->register(\sprintf('nelmio_api_doc.describers.openapi_php.%s', $area), OpenApiPhpDescriber::class)
                 ->setPublic(false)
                 ->setArguments([
-                    new Reference(sprintf('nelmio_api_doc.routes.%s', $area)),
+                    new Reference(\sprintf('nelmio_api_doc.routes.%s', $area)),
                     new Reference('nelmio_api_doc.controller_reflector'),
-                    new Reference('annotations.reader', ContainerInterface::NULL_ON_INVALID_REFERENCE), // We cannot use the cached version of the annotation reader since the construction of the annotations is context dependant...
-                    new Reference('logger'),
+                    $config['operation_id_generation'] instanceof OperationIdGeneration ?
+                        $config['operation_id_generation'] :
+                        OperationIdGeneration::from($config['operation_id_generation']),
                 ])
-                ->addTag(sprintf('nelmio_api_doc.describer.%s', $area), ['priority' => -200]);
+                ->addTag(\sprintf('nelmio_api_doc.describer.%s', $area), ['priority' => -200]);
 
-            $container->register(sprintf('nelmio_api_doc.describers.config.%s', $area), ExternalDocDescriber::class)
+            if (isset($areaConfig['security'])) {
+                $container->register(\sprintf('nelmio_api_doc.describers.security.%s', $area), SecurityDescriber::class)
+                    ->setPublic(false)
+                    ->setArguments([
+                        $areaConfig['security'],
+                        new Reference(\sprintf('nelmio_api_doc.routes.%s', $area)),
+                        new Reference('nelmio_api_doc.controller_reflector'),
+                    ])
+                    ->addTag(\sprintf('nelmio_api_doc.describer.%s', $area), ['priority' => -200]);
+            }
+
+            $container->register(\sprintf('nelmio_api_doc.describers.config.%s', $area), ExternalDocDescriber::class)
                 ->setPublic(false)
                 ->setArguments([
                     $areaConfig['documentation'],
                     true,
                 ])
-                ->addTag(sprintf('nelmio_api_doc.describer.%s', $area), ['priority' => 990]);
+                ->addTag(\sprintf('nelmio_api_doc.describer.%s', $area), ['priority' => 990]);
 
             unset($areaConfig['documentation']);
-            if (0 === count($areaConfig['path_patterns'])
-                && 0 === count($areaConfig['host_patterns'])
-                && 0 === count($areaConfig['name_patterns'])
-                && false === $areaConfig['with_annotation']
+            if (0 === \count($areaConfig['path_patterns'])
+                && 0 === \count($areaConfig['host_patterns'])
+                && 0 === \count($areaConfig['name_patterns'])
+                && false === $areaConfig['with_attribute']
                 && false === $areaConfig['disable_default_routes']
             ) {
-                $container->setDefinition(sprintf('nelmio_api_doc.routes.%s', $area), $routesDefinition)
+                $container->setDefinition(\sprintf('nelmio_api_doc.routes.%s', $area), $routesDefinition)
                     ->setPublic(false);
             } else {
-                $container->register(sprintf('nelmio_api_doc.routes.%s', $area), RouteCollection::class)
+                $container->register(\sprintf('nelmio_api_doc.routes.%s', $area), RouteCollection::class)
                     ->setPublic(false)
                     ->setFactory([
                         (new Definition(FilteredRouteCollectionBuilder::class))
                             ->setArguments(
                                 [
-                                    new Reference('annotation_reader', ContainerInterface::NULL_ON_INVALID_REFERENCE), // Here we use the cached version as we don't deal with @OA annotations in this service
                                     new Reference('nelmio_api_doc.controller_reflector'),
                                     $area,
                                     $areaConfig,
@@ -161,64 +173,69 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
             ->addTag('container.service_locator')
             ->addArgument(array_combine(
                 array_keys($config['areas']),
-                array_map(function ($area) { return new Reference(sprintf('nelmio_api_doc.generator.%s', $area)); }, array_keys($config['areas']))
+                array_map(static function ($area) { return new Reference(\sprintf('nelmio_api_doc.generator.%s', $area)); }, array_keys($config['areas']))
             ));
 
+        if (true === $config['type_info']) {
+            $container->getDefinition('nelmio_api_doc.model_describers.object')
+                ->setArgument(1, new Reference('nelmio_api_doc.type_describer.chain'));
+        }
+
         $container->getDefinition('nelmio_api_doc.model_describers.object')
-            ->setArgument(3, $config['media_types']);
+            ->setArgument(2, $config['media_types']);
 
         // Add autoconfiguration for model describer
         $container->registerForAutoconfiguration(ModelDescriberInterface::class)
             ->addTag('nelmio_api_doc.model_describer');
 
         // Import services needed for each library
-        $loader->load('php_doc.xml');
+        $loader->load('php_doc.php');
 
         if (interface_exists(ParamInterface::class)) {
-            $loader->load('fos_rest.xml');
+            $loader->load('fos_rest.php');
             $container->getDefinition('nelmio_api_doc.route_describers.fos_rest')
-                ->setArgument(1, $config['media_types']);
+                ->setArgument(0, $config['media_types']);
         }
 
-        if (PHP_VERSION_ID > 80100) {
-            // Add autoconfiguration for route argument describer
-            $container->registerForAutoconfiguration(RouteArgumentDescriberInterface::class)
-                ->addTag('nelmio_api_doc.route_argument_describer');
+        // Add autoconfiguration for route argument describer
+        $container->registerForAutoconfiguration(RouteArgumentDescriberInterface::class)
+            ->addTag('nelmio_api_doc.route_argument_describer');
 
-            $container->register('nelmio_api_doc.route_describers.route_argument', RouteArgumentDescriber::class)
+        $container->register('nelmio_api_doc.route_describers.route_argument', RouteArgumentDescriber::class)
+            ->setPublic(false)
+            ->addTag('nelmio_api_doc.route_describer', ['priority' => -225])
+            ->setArguments([
+                new Reference('argument_metadata_factory'),
+                new TaggedIteratorArgument('nelmio_api_doc.route_argument_describer'),
+            ])
+        ;
+
+        $container->register('nelmio_api_doc.route_argument_describer.map_query_string', SymfonyMapQueryStringDescriber::class)
+            ->setPublic(false)
+            ->addTag('nelmio_api_doc.route_argument_describer', ['priority' => 0]);
+
+        $container->register('nelmio_api_doc.swagger.processor.map_query_string', MapQueryStringProcessor::class)
+            ->setPublic(false)
+            ->addTag('nelmio_api_doc.swagger.processor', ['priority' => 0]);
+
+        $container->register('nelmio_api_doc.route_argument_describer.map_request_payload', SymfonyMapRequestPayloadDescriber::class)
+            ->setPublic(false)
+            ->addTag('nelmio_api_doc.route_argument_describer', ['priority' => 0]);
+
+        $container->register('nelmio_api_doc.swagger.processor.map_request_payload', MapRequestPayloadProcessor::class)
+            ->setPublic(false)
+            ->addTag('nelmio_api_doc.swagger.processor', ['priority' => 0]);
+
+        if (class_exists(MapQueryParameter::class)) {
+            $container->register('nelmio_api_doc.route_argument_describer.map_query_parameter', SymfonyMapQueryParameterDescriber::class)
                 ->setPublic(false)
-                ->addTag('nelmio_api_doc.route_describer', ['priority' => -225])
-                ->setArguments([
-                    new Reference('argument_metadata_factory'),
-                    new TaggedIteratorArgument('nelmio_api_doc.route_argument_describer'),
-                ])
-            ;
+                ->addTag('nelmio_api_doc.route_argument_describer', ['priority' => 0]);
+        }
 
-            if (class_exists(MapQueryString::class)) {
-                $container->register('nelmio_api_doc.route_argument_describer.map_query_string', SymfonyMapQueryStringDescriber::class)
-                    ->setPublic(false)
-                    ->addTag('nelmio_api_doc.route_argument_describer', ['priority' => 0]);
-
-                $container->register('nelmio_api_doc.swagger.processor.map_query_string', MapQueryStringProcessor::class)
-                    ->setPublic(false)
-                    ->addTag('nelmio_api_doc.swagger.processor', ['priority' => 0]);
-            }
-
-            if (class_exists(MapRequestPayload::class)) {
-                $container->register('nelmio_api_doc.route_argument_describer.map_request_payload', SymfonyMapRequestPayloadDescriber::class)
-                    ->setPublic(false)
-                    ->addTag('nelmio_api_doc.route_argument_describer', ['priority' => 0]);
-
-                $container->register('nelmio_api_doc.swagger.processor.map_request_payload', MapRequestPayloadProcessor::class)
-                    ->setPublic(false)
-                    ->addTag('nelmio_api_doc.swagger.processor', ['priority' => 0]);
-            }
-
-            if (class_exists(MapQueryParameter::class)) {
-                $container->register('nelmio_api_doc.route_argument_describer.map_query_parameter', SymfonyMapQueryParameterDescriber::class)
-                    ->setPublic(false)
-                    ->addTag('nelmio_api_doc.route_argument_describer', ['priority' => 0]);
-            }
+        if (class_exists(MapUploadedFile::class)) {
+            $container->register('nelmio_api_doc.route_argument_describer.map_uploaded_file', SymfonyMapUploadedFileDescriber::class)
+                ->setPublic(false)
+                ->addTag('nelmio_api_doc.route_argument_describer', ['priority' => 0]);
         }
 
         $bundles = $container->getParameter('kernel.bundles');
@@ -232,8 +249,8 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
         }
 
         // ApiPlatform support
-        if (isset($bundles['ApiPlatformBundle']) && class_exists('ApiPlatform\Documentation\Documentation')) {
-            $loader->load('api_platform.xml');
+        if (isset($bundles['ApiPlatformBundle'])) {
+            $loader->load('api_platform.php');
         }
 
         // JMS metadata support
@@ -245,7 +262,6 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
                 ->setPublic(false)
                 ->setArguments([
                     new Reference('jms_serializer.metadata_factory'),
-                    new Reference('annotations.reader', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                     $config['media_types'],
                     $jmsNamingStrategy,
                     $container->getParameter('nelmio_api_doc.use_validation_groups'),
@@ -269,18 +285,6 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
 
         // Import the base configuration
         $container->getDefinition('nelmio_api_doc.describers.config')->replaceArgument(0, $config['documentation']);
-
-        // Compatibility Symfony
-        $controllerNameConverter = null;
-        if ($container->hasDefinition('.legacy_controller_name_converter')) { // 4.4
-            $controllerNameConverter = $container->getDefinition('.legacy_controller_name_converter');
-        } elseif ($container->hasDefinition('controller_name_converter')) { // < 4.4
-            $controllerNameConverter = $container->getDefinition('controller_name_converter');
-        }
-
-        if (null !== $controllerNameConverter) {
-            $container->getDefinition('nelmio_api_doc.controller_reflector')->setArgument(1, $controllerNameConverter);
-        }
     }
 
     /**
@@ -290,8 +294,8 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
      */
     private function findNameAliases(array $names, string $area): array
     {
-        $nameAliases = array_filter($names, function (array $aliasInfo) use ($area) {
-            return [] === $aliasInfo['areas'] || in_array($area, $aliasInfo['areas'], true);
+        $nameAliases = array_filter($names, static function (array $aliasInfo) use ($area) {
+            return [] === $aliasInfo['areas'] || \in_array($area, $aliasInfo['areas'], true);
         });
 
         $aliases = [];
@@ -299,6 +303,8 @@ final class NelmioApiDocExtension extends Extension implements PrependExtensionI
             $aliases[$nameAlias['alias']] = [
                 'type' => $nameAlias['type'],
                 'groups' => $nameAlias['groups'],
+                'options' => $nameAlias['options'],
+                'serializationContext' => $nameAlias['serializationContext'],
             ];
         }
 

@@ -12,7 +12,6 @@
 namespace Nelmio\ApiDocBundle\Controller;
 
 use Nelmio\ApiDocBundle\Exception\RenderInvalidArgumentException;
-use Nelmio\ApiDocBundle\Render\Html\AssetsMode;
 use Nelmio\ApiDocBundle\Render\RenderOpenApi;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -35,7 +34,6 @@ final class SwaggerUiController
         try {
             $response = new Response(
                 $this->renderOpenApi->renderFromRequest($request, RenderOpenApi::HTML, $area, [
-                    'assets_mode' => AssetsMode::BUNDLE,
                     'ui_renderer' => $this->uiRenderer,
                 ]),
                 Response::HTTP_OK,
@@ -45,11 +43,11 @@ final class SwaggerUiController
             return $response->setCharset('UTF-8');
         } catch (RenderInvalidArgumentException $e) {
             $advice = '';
-            if (false !== strpos($area, '.json')) {
+            if (str_contains($area, '.json')) {
                 $advice = ' Since the area provided contains `.json`, the issue is likely caused by route priorities. Try switching the Swagger UI / the json documentation routes order.';
             }
 
-            throw new BadRequestHttpException(sprintf('Area "%s" is not supported as it isn\'t defined in config.%s', $area, $advice), $e);
+            throw new BadRequestHttpException(\sprintf('Area "%s" is not supported as it isn\'t defined in config.%s', $area, $advice), $e);
         }
     }
 }

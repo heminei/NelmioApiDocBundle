@@ -32,8 +32,8 @@ final class DocumentationController
             return JsonResponse::fromJsonString(
                 $this->renderOpenApi->renderFromRequest($request, RenderOpenApi::JSON, $area)
             );
-        } catch (RenderInvalidArgumentException $e) {
-            throw new BadRequestHttpException(sprintf('Area "%s" is not supported as it isn\'t defined in config.', $area));
+        } catch (RenderInvalidArgumentException) {
+            throw new BadRequestHttpException(\sprintf('Area "%s" is not supported as it isn\'t defined in config.', $area));
         }
     }
 }

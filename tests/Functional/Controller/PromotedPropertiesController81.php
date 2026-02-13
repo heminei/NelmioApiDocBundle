@@ -13,10 +13,10 @@ declare(strict_types=1);
 
 namespace Nelmio\ApiDocBundle\Tests\Functional\Controller;
 
-use Nelmio\ApiDocBundle\Annotation\Model;
-use Nelmio\ApiDocBundle\Tests\Functional\Entity\EntityWithPromotedPropertiesWithDefaults81;
+use Nelmio\ApiDocBundle\Attribute\Model;
+use Nelmio\ApiDocBundle\Tests\Functional\Entity\EntityWithPromotedPropertiesWithDefaults;
 use OpenApi\Attributes as OA;
-use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Component\Routing\Attribute\Route;
 
 class PromotedPropertiesController81
 {
@@ -29,9 +29,9 @@ class PromotedPropertiesController81
         description: 'Operation automatically detected',
     )]
     #[OA\RequestBody(
-        content: new Model(type: EntityWithPromotedPropertiesWithDefaults81::class),
+        content: new Model(type: EntityWithPromotedPropertiesWithDefaults::class),
     )]
-    public function entityWithPromotedPropertiesWithDefaults()
+    public function entityWithPromotedPropertiesWithDefaults(): void
     {
     }
 }

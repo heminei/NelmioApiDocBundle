@@ -42,13 +42,13 @@ class GetNelmioAsset extends AbstractExtension
     {
         [$extension, $mode] = $this->getExtension($defaultAssetsMode, $asset);
         [$resource, $isInline] = $this->getResource($asset, $mode);
-        if ('js' == $extension) {
+        if ('js' === $extension) {
             return $this->renderJavascript($resource, $isInline);
-        } elseif ('css' == $extension) {
+        } elseif ('css' === $extension) {
             return $this->renderCss($resource, $isInline);
-        } else {
-            return $resource;
         }
+
+        return $resource;
     }
 
     /**
@@ -60,10 +60,10 @@ class GetNelmioAsset extends AbstractExtension
         if ('.js' === $extension) {
             return ['js', $assetsMode];
         } elseif ('png' === $extension) {
-            return ['png', AssetsMode::OFFLINE == $assetsMode ? AssetsMode::CDN : $assetsMode];
-        } else {
-            return ['css', $assetsMode];
+            return ['png', AssetsMode::OFFLINE === $assetsMode ? AssetsMode::CDN : $assetsMode];
         }
+
+        return ['css', $assetsMode];
     }
 
     /**
@@ -71,32 +71,32 @@ class GetNelmioAsset extends AbstractExtension
      */
     private function getResource(string $asset, string $mode): array
     {
-        if (filter_var($asset, FILTER_VALIDATE_URL)) {
+        if (filter_var($asset, \FILTER_VALIDATE_URL)) {
             return [$asset, false];
         } elseif (AssetsMode::OFFLINE === $mode) {
             return [file_get_contents($this->resourcesDir.'/'.$asset), true];
         } elseif (AssetsMode::CDN === $mode) {
             return [$this->cdnUrl.'/'.$asset, false];
-        } else {
-            return [$this->assetExtension->getAssetUrl(sprintf('bundles/nelmioapidoc/%s', $asset)), false];
         }
+
+        return [$this->assetExtension->getAssetUrl(\sprintf('bundles/nelmioapidoc/%s', $asset)), false];
     }
 
     private function renderJavascript(string $script, bool $isInline): string
     {
         if ($isInline) {
-            return sprintf('<script>%s</script>', $script);
-        } else {
-            return sprintf('<script src="%s"></script>', $script);
+            return \sprintf('<script>%s</script>', $script);
         }
+
+        return \sprintf('<script src="%s"></script>', $script);
     }
 
     private function renderCss(string $stylesheet, bool $isInline): string
     {
         if ($isInline) {
-            return sprintf('<style>%s</style>', $stylesheet);
-        } else {
-            return sprintf('<link rel="stylesheet" href="%s">', $stylesheet);
+            return \sprintf('<style>%s</style>', $stylesheet);
         }
+
+        return \sprintf('<link rel="stylesheet" href="%s">', $stylesheet);
     }
 }

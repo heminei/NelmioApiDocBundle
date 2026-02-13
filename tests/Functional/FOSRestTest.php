@@ -13,8 +13,11 @@ namespace Nelmio\ApiDocBundle\Tests\Functional;
 
 use OpenApi\Annotations as OA;
 use OpenApi\Generator;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Group;
 use Symfony\Component\HttpKernel\KernelInterface;
 
+#[Group('fos-rest')]
 class FOSRestTest extends WebTestCase
 {
     /**
@@ -32,9 +35,7 @@ class FOSRestTest extends WebTestCase
         static::createClient([], ['HTTP_HOST' => 'api.example.com']);
     }
 
-    /**
-     * @dataProvider provideRoute
-     */
+    #[DataProvider('provideRoute')]
     public function testFOSRestAction(string $route): void
     {
         $operation = $this->getOperation($route, 'post');
@@ -81,10 +82,8 @@ class FOSRestTest extends WebTestCase
 
     public static function provideRoute(): \Generator
     {
-        yield 'Annotations' => ['/api/fosrest'];
+        yield ['/api/fosrest'];
 
-        if (TestKernel::isAttributesAvailable()) {
-            yield 'Attributes' => ['/api/fosrest_attributes'];
-        }
+        yield ['/api/fosrest_attributes'];
     }
 }
